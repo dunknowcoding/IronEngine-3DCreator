@@ -1,0 +1,50 @@
+name: Package Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install packaging tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build source and wheel distributions
+        run: python -m build
+
+      - name: Check distribution metadata
+        run: python -m twine check dist/*
+
+      - name: Verify bundled prompt asset
+        shell: python
+        run: |
+          from pathlib import Path
+          import zipfile
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if not wheels:
+              raise SystemExit("No wheel produced in dist/")
+
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = set(archive.namelist())
+
+          expected = "ironengine_3d_creator/llm/SOUL.md"
+          if expected not in names:
+              raise SystemExit(f"Missing bundled asset: {expected}")
+
+          print(f"Verified bundled asset in {wheels[0].name}: {expected}")
