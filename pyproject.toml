@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ironengine-3d-creator"
+version = "0.2.0"
+description = "Desktop app for turning natural-language prompts into structurally valid 3D point clouds and preview meshes."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "NiusRobotLab" }]
+keywords = ["3d", "point-cloud", "procedural-generation", "ollama", "pyside6", "ironengine"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Artistic Software",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "numpy>=1.24",
+    "open3d>=0.18",
+    "PySide6>=6.6",
+    "PyOpenGL>=3.1",
+    "psutil>=5.9",
+    "requests>=2.31",
+    "keyring>=24.3",
+]
+
+[project.optional-dependencies]
+sim = ["ironengine-sim"]
+anthropic = ["anthropic>=0.39"]
+openai = ["openai>=1.40"]
+nvidia = ["pynvml>=11.5"]
+gpu_cupy = ["cupy-cuda12x"]
+gpu_torch = ["torch"]
+gpu_taichi = ["taichi>=1.7"]
+all = [
+    "ironengine-3d-creator[sim,anthropic,openai,nvidia,gpu_cupy,gpu_torch,gpu_taichi]",
+]
+dev = ["build>=1.2", "ruff>=0.6", "twine>=5.1"]
+
+[project.scripts]
+ironengine-3d-creator = "ironengine_3d_creator.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ironengine_3d_creator*"]
+
+[tool.setuptools.package-data]
+"ironengine_3d_creator.llm" = ["SOUL.md"]

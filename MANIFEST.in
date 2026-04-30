@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include SOUL.md
+include environment.yml
+include CHANGELOG.md
+include CONTRIBUTING.md
+recursive-include docs *.md *.png
+recursive-include src/ironengine_3d_creator/llm *.md
