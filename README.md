@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # IronEngine 3D Creator
 
@@ -27,7 +27,7 @@ Most LLM-to-3D experiments fail in the same places: legs float, supports interse
 The workflow is:
 
 ```text
-Prompt 鈫?SOUL rules 鈫?LLM JSON spec 鈫?validator 鈫?integrity repair 鈫?point-cloud sampler 鈫?mesh reconstruction 鈫?preview/export
+Prompt -> SOUL rules -> LLM JSON spec -> validator -> integrity repair -> point-cloud sampler -> mesh reconstruction -> preview/export
 ```
 
 That keeps generations fast, seedable, reproducible, and much easier to repair than arbitrary mesh output.
