@@ -19,15 +19,17 @@
   <a href="https://github.com/dunknowcoding/IronEngine-3DCreator/issues"><img alt="Support" src="https://img.shields.io/badge/support-github%20issues-111827"></a>
 </p>
 
+<img alt="IronEngine 3D Creator banner" src="docs/assets/readme/readme-banner.svg" width="100%">
+
 Turn natural-language prompts into editable 3D point clouds, repair common structural mistakes automatically, preview the result in a live Qt/OpenGL viewport, and export to formats that fit the wider IronEngine toolchain.
 
 **Now available on PyPI** as `ironengine-3d-creator`. Built and packaged by **NiusRobotLab**.
 
 </div>
 
-> **Best for:** makers, tool builders, and local-AI tinkerers who want a practical path from prompt → structured 3D output → editable result.
+> **Best for:** makers, tool builders, and local-AI tinkerers who want a practical path from prompt -> structured 3D output -> editable result.
 
-**Jump to:** [Quick Start](#quick-start) · [Screenshot Gallery](#screenshot-gallery) · [Installation](#installation) · [How To Use The App](#how-to-use-the-app) · [Packaging And Distribution](#packaging-and-distribution)
+**Jump to:** [Quick Start](#quick-start) | [Prompt-to-Result](#prompt-to-result) | [Screenshot Gallery](#screenshot-gallery) | [Installation](#installation) | [How To Use The App](#how-to-use-the-app) | [Packaging And Distribution](#packaging-and-distribution)
 
 ---
 
@@ -52,6 +54,12 @@ That keeps generations fast, seedable, reproducible, and much easier to repair t
 | 3 | Start Ollama locally | `ollama serve` |
 | 4 | Pull a compact local model | `ollama pull qwen3.5:0.8b` |
 | 5 | Generate your first object | Set provider to `ollama`, select the model, enter a prompt, click **Generate** |
+
+## Prompt-to-result
+
+| Input | What the app does | Output |
+|---|---|---|
+| `A Chinese porcelain vase with cobalt blue painted bands and a polished ceramic finish` | The model emits a compact JSON spec, the integrity layer repairs structure, and the sampler reconstructs a dense point cloud for preview. | A vase you can inspect in points mode, switch to mesh mode, edit manually, and export to `PLY`, `PCD`, `GLB`, or `OBJ`. |
 
 ## Why it feels different
 
