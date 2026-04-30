@@ -8,6 +8,11 @@ on:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to publish (for example v0.2.0 or main)
+        required: false
+        default: main
 
 jobs:
   build:
@@ -17,6 +22,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
