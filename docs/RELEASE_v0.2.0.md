@@ -1,4 +1,4 @@
-﻿# IronEngine 3D Creator v0.2.0
+# IronEngine 3D Creator v0.2.0
 
 Released: 2026-04-29
 Tag: `v0.2.0`
@@ -76,9 +76,12 @@ The app remains centered on structured 3D generation:
 
 Before publishing from GitHub Releases, configure a trusted publisher on PyPI for this repository:
 
+- PyPI project: `ironengine-3d-creator`
 - owner: `dunknowcoding`
 - repository: `IronEngine-3DCreator`
 - workflow: `publish-pypi.yml`
 - environment: `pypi`
 
-After that, publishing a GitHub release for tag `v0.2.0` will trigger the PyPI workflow.
+If trusted publishing is not configured yet, add the GitHub Actions secret `PYPI_API_TOKEN` and rerun the publish workflow against `v0.2.0`.
+
+For the complete setup and troubleshooting steps, see [`docs/PYPI_PUBLISHING.md`](docs/PYPI_PUBLISHING.md).
