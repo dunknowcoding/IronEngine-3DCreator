@@ -25,6 +25,10 @@ Turn natural-language prompts into editable 3D point clouds, repair common struc
 
 </div>
 
+> **Best for:** makers, tool builders, and local-AI tinkerers who want a practical path from prompt → structured 3D output → editable result.
+
+**Jump to:** [Quick Start](#quick-start) · [Screenshot Gallery](#screenshot-gallery) · [Installation](#installation) · [How To Use The App](#how-to-use-the-app) · [Packaging And Distribution](#packaging-and-distribution)
+
 ---
 
 ## Why this project exists
@@ -38,6 +42,16 @@ Prompt -> SOUL rules -> LLM JSON spec -> validator -> integrity repair -> point-
 ```
 
 That keeps generations fast, seedable, reproducible, and much easier to repair than arbitrary mesh output.
+
+## Quick start
+
+| Step | What to do | Command / action |
+|---|---|---|
+| 1 | Install from PyPI | `python -m pip install ironengine-3d-creator` |
+| 2 | Launch the desktop app | `ironengine-3d-creator` |
+| 3 | Start Ollama locally | `ollama serve` |
+| 4 | Pull a compact local model | `ollama pull qwen3.5:0.8b` |
+| 5 | Generate your first object | Set provider to `ollama`, select the model, enter a prompt, click **Generate** |
 
 ## Why it feels different
 
@@ -121,6 +135,15 @@ python -m pip install -e .
 ```
 
 `open3d` is part of the base package requirements, so mesh reconstruction and export work out of the box after install.
+
+<details>
+<summary><strong>Need a fuller setup path?</strong></summary>
+
+- Use `docs/INSTALL.md` for the more detailed installation and smoke-test flow.
+- Prefer the editable install if you plan to modify the app or package metadata.
+- Keep GPU extras optional unless they match your machine, CUDA stack, and drivers.
+
+</details>
 
 ## Optional extras
 
