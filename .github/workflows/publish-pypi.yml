@@ -53,6 +53,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     environment:
       name: pypi
       url: https://pypi.org/p/ironengine-3d-creator
@@ -64,11 +66,11 @@ jobs:
           path: dist
 
       - name: Publish to PyPI with API token
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        if: ${{ env.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          password: ${{ env.PYPI_API_TOKEN }}
 
       - name: Publish to PyPI with trusted publishing
-        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        if: ${{ env.PYPI_API_TOKEN == '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
