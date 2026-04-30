@@ -2,19 +2,26 @@
 
 # IronEngine 3D Creator
 
-### Prompt-to-3D desktop generator with structural repair, live viewport preview, and local/cloud LLM support
+### Prompt-to-3D desktop generator for structurally valid point clouds, live viewport preview, and local/cloud LLM workflows
 
 <p>
-  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white">
-  <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
+  <a href="https://pypi.org/project/ironengine-3d-creator/"><img alt="PyPI" src="https://img.shields.io/pypi/v/ironengine-3d-creator?logo=pypi&logoColor=white"></a>
+  <img alt="Python" src="https://img.shields.io/pypi/pyversions/ironengine-3d-creator?logo=python&logoColor=white">
+  <img alt="UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
   <img alt="Renderer" src="https://img.shields.io/badge/rendering-OpenGL%20%2B%20Open3D-6E40C9">
   <img alt="LLM" src="https://img.shields.io/badge/LLM-Ollama%20%7C%20OpenAI%20%7C%20Anthropic-111827">
-  <img alt="Packaging" src="https://img.shields.io/badge/install-Conda%20first-0F766E">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-F59E0B">
+</p>
+
+<p>
+  <a href="https://pypi.org/project/ironengine-3d-creator/"><img alt="Install from PyPI" src="https://img.shields.io/badge/install-pip%20install%20ironengine--3d--creator-2563EB"></a>
+  <a href="docs/INSTALL.md"><img alt="Installation Guide" src="https://img.shields.io/badge/docs-installation%20guide-0F766E"></a>
+  <a href="https://github.com/dunknowcoding/IronEngine-3DCreator/issues"><img alt="Support" src="https://img.shields.io/badge/support-github%20issues-111827"></a>
 </p>
 
 Turn natural-language prompts into editable 3D point clouds, repair common structural mistakes automatically, preview the result in a live Qt/OpenGL viewport, and export to formats that fit the wider IronEngine toolchain.
 
-Built and packaged by **NiusRobotLab**.
+**Now available on PyPI** as `ironengine-3d-creator`. Built and packaged by **NiusRobotLab**.
 
 </div>
 
@@ -32,19 +39,18 @@ Prompt -> SOUL rules -> LLM JSON spec -> validator -> integrity repair -> point-
 
 That keeps generations fast, seedable, reproducible, and much easier to repair than arbitrary mesh output.
 
-## Screenshots
+## Why it feels different
 
-### Full UI driven locally with `qwen3.5:0.8b`
+- **Local-first 3D generation**: pair the app with Ollama and lightweight `qwen3.5` models for a practical desktop workflow.
+- **Structure before geometry**: the model emits a compact `GenerationSpec`, then deterministic integrity repair fixes common support and alignment mistakes.
+- **Interactive editor, not a one-shot demo**: inspect the JSON spec, switch between point and mesh view, and make manual edits before export.
+- **Package + app together**: install it like a Python package, run it as a desktop tool, and still script or extend the underlying pipeline.
 
-![IronEngine 3D Creator UI with local qwen3.5 model](docs/assets/readme/ui-window-qwen35.png)
+## Screenshot gallery
 
-### Generated point-cloud viewport
-
-![Generated vase point cloud](docs/assets/readme/viewport-vase-qwen35.png)
-
-### Reconstructed mesh preview
-
-![Generated vase mesh preview](docs/assets/readme/viewport-vase-qwen35-mesh.png)
+| Full UI | Point cloud viewport | Reconstructed mesh |
+|---|---|---|
+| ![IronEngine 3D Creator UI with local qwen3.5 model](docs/assets/readme/ui-window-qwen35.png) | ![Generated vase point cloud](docs/assets/readme/viewport-vase-qwen35.png) | ![Generated vase mesh preview](docs/assets/readme/viewport-vase-qwen35-mesh.png) |
 
 The screenshots above were captured from the local app flow in the `IronEngineWorld` Conda environment using Ollama with `qwen3.5:0.8b` and a porcelain-vase prompt.
 
@@ -57,7 +63,7 @@ The screenshots above were captured from the local app flow in the `IronEngineWo
 - **Renderer API included**: offscreen render helpers let you create RGBA previews without opening the full app.
 - **Package-ready layout**: Conda environment file, wheel manifest, packaged prompt rules, contributor guide, and changelog are included.
 
-## Core capabilities
+## At a glance
 
 | Area | What it does |
 |---|---|
@@ -92,7 +98,14 @@ tools/
 
 ## Installation
 
-### Recommended: Conda with `IronEngineWorld`
+### Fastest path: install from PyPI
+
+```powershell
+python -m pip install ironengine-3d-creator
+ironengine-3d-creator
+```
+
+### Recommended for contributors: Conda with `IronEngineWorld`
 
 ```powershell
 conda env create -f environment.yml
@@ -255,10 +268,10 @@ python -m pip install dist\ironengine_3d_creator-0.2.0-py3-none-any.whl
 
 ## Docs
 
-- [`docs/INSTALL.md`](docs/INSTALL.md) 鈥?installation and package smoke-test notes
-- [`docs/PROJECT_ANALYSIS.md`](docs/PROJECT_ANALYSIS.md) 鈥?architecture and repo-readiness audit summary
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) 鈥?development workflow notes
-- [`CHANGELOG.md`](CHANGELOG.md) 鈥?tracked repository cleanup and packaging changes
+- [`docs/INSTALL.md`](docs/INSTALL.md) — installation and package smoke-test notes
+- [`docs/PROJECT_ANALYSIS.md`](docs/PROJECT_ANALYSIS.md) — architecture and repo-readiness audit summary
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development workflow notes
+- [`CHANGELOG.md`](CHANGELOG.md) — tracked repository cleanup and packaging changes
 
 ## Known practical notes
 
@@ -280,5 +293,3 @@ The current README images were produced locally from the real application flow u
 - Model: `qwen3.5:0.8b`
 
 If the UI or visual styling changes, refresh the embedded screenshots from a new local capture run before publishing.
-
-
