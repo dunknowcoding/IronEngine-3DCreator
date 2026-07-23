@@ -12,7 +12,6 @@ from typing import Callable, Iterator, Optional
 
 import numpy as np
 
-from ..alignment.defaults import auto_template
 from ..alignment.integrity import check_and_fix as integrity_fix
 from ..alignment.parser import parse_spec
 from ..alignment.schema import GenerationSpec
@@ -20,8 +19,15 @@ from ..alignment.validator import normalize
 from ..generation.code_sandbox import run_sandbox
 from ..generation.colorize import base_color, shaded_colors
 from ..generation.compositor import GenerationResult, generate
+from ..generation.style_engine import (
+    STYLE_FAMILIES,
+    StyleEngine,
+    family_from_prompt,
+    mutate_spec,
+)
 from ..llm.base import LLMProvider
 from ..llm.prompts import CODE_SYSTEM_PROMPT, SPEC_SYSTEM_PROMPT
+from ..llm.repair import make_spec_validator, stream_with_repair
 
 _log = logging.getLogger(__name__)
 
@@ -37,6 +43,8 @@ class PipelineRequest:
     seed: int = 0
     code_mode: bool = False     # advanced: LLM emits Python instead of JSON
     ram_cap_mb: int = 0         # 0 → no cap; otherwise n_points is clamped to fit
+    style: str = "auto"         # 'auto' | 'random' | style-family name
+    complexity: str = "auto"    # 'auto' | 'simple' | 'complex' (style engine only)
 
 
 @dataclass
@@ -86,6 +94,26 @@ def _enforce_ram_cap(req: PipelineRequest, warnings: list[str]) -> PipelineReque
     return replace(req, n_points=clamped)
 
 
+def _style_spec_for_request(req: PipelineRequest) -> GenerationSpec:
+    """Procedural style-engine spec for auto / no-LLM / fallback paths.
+
+    Family selection: an explicit style-family name wins; 'auto' routes on
+    prompt/shape-hint keywords; 'random' (or an auto route with no keyword
+    hit) draws a weighted-random family from the request's seed.
+    """
+    style = (req.style or "auto").strip().lower()
+    family = None
+    if style in STYLE_FAMILIES:
+        family = style
+    elif style == "auto":
+        family = family_from_prompt(
+            " ".join(p for p in (req.user_prompt, req.shape_hint or "", req.details) if p)
+        )
+    engine = StyleEngine(seed=req.seed or 0)
+    return engine.generate(family=family, complexity=req.complexity,
+                           n_points=req.n_points, bbox=req.bbox)
+
+
 def run(
     req: PipelineRequest,
     provider: LLMProvider | None,
@@ -107,12 +135,7 @@ def run(
     if not req.user_prompt.strip() or provider is None:
         if on_stage:
             on_stage("auto")
-        spec = auto_template(req.shape_hint)
-        # Honor the user's point budget / bbox / seed even in auto mode.
-        spec.n_points = req.n_points
-        spec.bbox_size = req.bbox
-        if req.seed:
-            spec.seed = req.seed
+        spec = _style_spec_for_request(req)
     elif req.code_mode:
         if on_stage:
             on_stage("code")
@@ -148,17 +171,39 @@ def run(
     else:
         if on_stage:
             on_stage("aligning")
-        chunks = []
-        for tok in provider.stream(SPEC_SYSTEM_PROMPT, build_user_prompt(req), stop_event=stop_event):
-            chunks.append(tok)
-            if on_token:
-                on_token(tok)
-        raw = "".join(chunks)
-        try:
-            spec = parse_spec(raw)
-        except Exception as e:
-            warnings.append(f"could not parse LLM JSON ({e}); falling back to auto")
-            spec = auto_template(req.shape_hint)
+        # Self-repair loop: the first answer is validated (parseable JSON,
+        # non-empty primitives, <30% integrity churn); on failure the model
+        # gets exactly ONE repair round with the error list before we fall
+        # back to the deterministic style engine.
+        outcome = stream_with_repair(
+            provider, SPEC_SYSTEM_PROMPT, build_user_prompt(req),
+            make_spec_validator(),
+            stop_event=stop_event, on_token=on_token,
+        )
+        raw = outcome.text
+        spec: GenerationSpec | None = None
+        if outcome.ok:
+            if outcome.repaired:
+                warnings.append(
+                    "LLM spec self-repaired after one validator-feedback round"
+                )
+            try:
+                spec = parse_spec(raw)
+            except Exception as e:  # defensive: validator already parsed it
+                warnings.append(f"could not parse LLM JSON ({e}); falling back to style engine")
+        else:
+            warnings.append(
+                f"LLM spec still invalid after {outcome.attempts} attempt(s) "
+                f"({'; '.join(outcome.errors)}); falling back to style engine"
+            )
+        if spec is None:
+            spec = _style_spec_for_request(req)
+        else:
+            # Style 'random' on the LLM path: seeded style mutation so repeated
+            # identical prompts don't yield identical objects.
+            if (req.style or "").strip().lower() == "random":
+                spec = mutate_spec(spec, seed=req.seed or 0)
+                warnings.append("style 'random': applied seeded style mutation")
         if req.seed:
             spec.seed = req.seed
         if req.n_points:

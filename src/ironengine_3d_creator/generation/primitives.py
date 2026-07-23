@@ -267,6 +267,290 @@ def sample_plane(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
     return np.stack([x, np.zeros_like(x), z], axis=-1).astype(np.float32)
 
 
+# ---------------------------------------------------------------------------
+# complex-shape kinds (F6): superellipsoid / tube / arch / panel
+# ---------------------------------------------------------------------------
+
+
+def _signed_pow(v: np.ndarray, e: float) -> np.ndarray:
+    return np.sign(v) * np.abs(v) ** e
+
+
+def _superellipsoid_unit(dirs: np.ndarray, e1: float, e2: float) -> np.ndarray:
+    """Map unit-sphere directions radially onto the unit superellipsoid.
+
+    The implicit surface (|x|^(2/e2) + |z|^(2/e2))^(e2/e1) + |y|^(2/e1) = 1 is
+    homogeneous of degree 2/e1, so the radial scale factor has a closed form.
+    """
+    x, y, z = dirs[:, 0], dirs[:, 1], dirs[:, 2]
+    a = (np.abs(x) ** (2.0 / e2) + np.abs(z) ** (2.0 / e2)) ** (e2 / e1)
+    t = (a + np.abs(y) ** (2.0 / e1)) ** (-e1 / 2.0)
+    return dirs * t[:, None]
+
+
+def sample_superellipsoid(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
+    """Rejection sampler: candidate directions weighted by the local area
+    element (exact for ellipsoids, a close approximation elsewhere)."""
+    rx, ry, rz = (float(v) for v in params.get("radii", [0.5, 0.5, 0.5]))
+    e1, e2 = (float(v) for v in params.get("exponents", [1.0, 1.0]))
+    radii = np.asarray([rx, ry, rz], dtype=np.float64)
+    inv = 1.0 / radii
+    accept_max = inv.max()
+    out: list[np.ndarray] = []
+    needed = n
+    while needed > 0:
+        m = int(needed * 1.6) + 16
+        u = rng.standard_normal((m, 3))
+        u /= np.linalg.norm(u, axis=1, keepdims=True) + 1e-12
+        w = _superellipsoid_unit(u, e1, e2)
+        # Approximate area weight via the unit-surface normal mapped by D^-1.
+        g = np.stack([
+            np.abs(w[:, 0]) ** max(2.0 / e2 - 1.0, 0.0) * np.sign(w[:, 0]),
+            np.abs(w[:, 1]) ** max(2.0 / e1 - 1.0, 0.0) * np.sign(w[:, 1]),
+            np.abs(w[:, 2]) ** max(2.0 / e2 - 1.0, 0.0) * np.sign(w[:, 2]),
+        ], axis=-1)
+        gn = np.linalg.norm(g, axis=1, keepdims=True)
+        nrm = g / np.where(gn > 1e-12, gn, 1.0)
+        weight = np.linalg.norm(nrm * inv, axis=1)
+        keep = rng.uniform(0.0, accept_max, m) <= weight
+        pts = w[keep] * radii
+        if pts.shape[0]:
+            out.append(pts.astype(np.float32))
+            needed -= pts.shape[0]
+    if not out:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.concatenate(out, axis=0)[:n]
+
+
+def tube_path_and_radii(params: dict) -> tuple[np.ndarray, float, float]:
+    """Resolve a tube's path polyline + (start, end) radii from params.
+
+    `path` is the canonical form; when absent we fall back to a straight
+    vertical bar of `height` so `tube` is a drop-in curvable cylinder.
+    """
+    path = params.get("path")
+    if not path or len(path) < 2:
+        h = float(params.get("height", 1.0))
+        path = [[0.0, -h / 2.0, 0.0], [0.0, h / 2.0, 0.0]]
+    pts = np.asarray(path, dtype=np.float64).reshape(-1, 3)
+    r1 = float(params.get("radius", 0.05))
+    r2 = float(params.get("radius2", r1))
+    return pts, r1, r2
+
+
+def path_length(pts: np.ndarray) -> float:
+    return float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
+
+
+def _path_frames(pts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Parallel-transport frames (tangent, normal, binormal) per path vertex."""
+    k = pts.shape[0]
+    tan = np.zeros_like(pts)
+    tan[0] = pts[1] - pts[0]
+    tan[-1] = pts[-1] - pts[-2]
+    if k > 2:
+        tan[1:-1] = pts[2:] - pts[:-2]
+    tan /= np.linalg.norm(tan, axis=1, keepdims=True) + 1e-12
+    # Seed normal: least-aligned world axis crossed with the first tangent.
+    axes = np.eye(3)
+    seed = axes[np.argmin(np.abs(axes @ tan[0]))]
+    nrm = np.zeros_like(pts)
+    nrm[0] = seed - np.dot(seed, tan[0]) * tan[0]
+    nrm[0] /= np.linalg.norm(nrm[0]) + 1e-12
+    for i in range(1, k):
+        v = nrm[i - 1] - np.dot(nrm[i - 1], tan[i]) * tan[i]
+        n = np.linalg.norm(v)
+        if n < 1e-9:
+            v = nrm[i - 1]
+            n = 1.0
+        nrm[i] = v / n
+    bnm = np.cross(tan, nrm)
+    bnm /= np.linalg.norm(bnm, axis=1, keepdims=True) + 1e-12
+    return tan, nrm, bnm
+
+
+def sample_tube(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
+    pts, r1, r2 = tube_path_and_radii(params)
+    caps = bool(params.get("caps", True))
+    seg_len = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    k = pts.shape[0]
+    # Radius at each vertex, linearly interpolated along the path.
+    cum = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total = cum[-1] if cum[-1] > 0 else 1.0
+    r_vert = r1 + (r2 - r1) * (cum / total)
+    # Side area per segment ≈ π (r_a + r_b) L (frustum); caps as disks.
+    seg_area = math.pi * (r_vert[:-1] + r_vert[1:]) * seg_len
+    cap_area = (math.pi * r1 * r1 + math.pi * r2 * r2) if caps else 0.0
+    area_all = np.concatenate([seg_area, [cap_area]])
+    weights = area_all / area_all.sum()
+    counts = rng.multinomial(n, weights)
+    tan, nrm, bnm = _path_frames(pts)
+
+    out: list[np.ndarray] = []
+    for s in range(k - 1):
+        m = int(counts[s])
+        if m <= 0 or seg_len[s] <= 0:
+            continue
+        t = rng.uniform(0.0, 1.0, m)
+        r_s = r_vert[s] * (1.0 - t) + r_vert[s + 1] * t
+        # Taper rejection: density along the segment ∝ local radius.
+        r_max = max(r_vert[s], r_vert[s + 1])
+        if r_max > 0:
+            keep = rng.uniform(0.0, r_max, m) <= r_s
+            t, r_s = t[keep], r_s[keep]
+        if t.size == 0:
+            continue
+        center = pts[s] * (1.0 - t)[:, None] + pts[s + 1] * t[:, None]
+        # Interpolate the frame along the segment (short-arc blend).
+        frame_n = nrm[s] * (1.0 - t)[:, None] + nrm[s + 1] * t[:, None]
+        frame_b = bnm[s] * (1.0 - t)[:, None] + bnm[s + 1] * t[:, None]
+        frame_n /= np.linalg.norm(frame_n, axis=1, keepdims=True) + 1e-12
+        frame_b /= np.linalg.norm(frame_b, axis=1, keepdims=True) + 1e-12
+        th = rng.uniform(0.0, 2 * math.pi, t.size)
+        offset = r_s[:, None] * (np.cos(th)[:, None] * frame_n + np.sin(th)[:, None] * frame_b)
+        out.append(center + offset)
+    n_cap = int(counts[-1])
+    if caps and n_cap > 0:
+        n_each = n_cap // 2
+        for row, rr, sign, m in ((0, r1, -1.0, n_each), (k - 1, r2, 1.0, n_cap - n_each)):
+            if m <= 0 or rr <= 0:
+                continue
+            u = rng.uniform(0.0, 1.0, m)
+            v = rng.uniform(0.0, 2 * math.pi, m)
+            rr_s = rr * np.sqrt(u)
+            cap = pts[row] + rr_s[:, None] * (
+                np.cos(v)[:, None] * nrm[row] + np.sin(v)[:, None] * bnm[row]
+            )
+            out.append(cap)
+    if not out:
+        return np.empty((0, 3), dtype=np.float32)
+    return _stack(*out)[:n]
+
+
+def arch_angles(params: dict) -> tuple[float, float, float, float]:
+    """(R, r, start_angle, arc) for the arch primitive."""
+    R = float(params.get("major_radius", 0.5))
+    r = float(params.get("minor_radius", 0.1))
+    start = float(params.get("start_angle", 0.0))
+    arc = float(params.get("arc", math.pi))
+    return R, r, start, arc
+
+
+def sample_arch(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
+    """Area-uniform sampling on a torus *segment* standing in the XY plane.
+
+    Centre curve C(u) = (R cos u, R sin u, 0), u ∈ [start, start+arc]; the
+    default (arc = π) is a proper ∩ arch with both feet at y = 0.
+    """
+    R, r, start, arc = arch_angles(params)
+    caps = bool(params.get("caps", True))
+    side_area = 2 * math.pi * r * R * arc
+    cap_area = 2 * math.pi * r * r if caps else 0.0
+    total = side_area + cap_area
+    n_side = int(round(n * side_area / total))
+    n_cap = n - n_side
+
+    out: list[np.ndarray] = []
+    needed = n_side
+    while needed > 0:
+        m = int(needed * 1.4) + 16
+        u = rng.uniform(start, start + arc, m)
+        v = rng.uniform(0.0, 2 * math.pi, m)
+        # Area element ∝ (R + r cos v): rejection as on the full torus.
+        accept = rng.uniform(0.0, R + r, m) <= (R + r * np.cos(v))
+        u, v = u[accept], v[accept]
+        x = (R + r * np.cos(v)) * np.cos(u)
+        y = (R + r * np.cos(v)) * np.sin(u)
+        z = r * np.sin(v) * np.ones_like(x)
+        if u.size:
+            out.append(np.stack([x, y, z], axis=-1))
+            needed -= u.size
+    if caps and n_cap > 0:
+        n_each = n_cap // 2
+        for u_end, m in ((start, n_each), (start + arc, n_cap - n_each)):
+            if m <= 0:
+                continue
+            # Disk ⊥ tangent in the plane spanned by radial/binormal.
+            radial = np.array([math.cos(u_end), math.sin(u_end), 0.0])
+            binormal = np.array([0.0, 0.0, 1.0])
+            centre = np.array([R * math.cos(u_end), R * math.sin(u_end), 0.0])
+            a = rng.uniform(0.0, 1.0, m)
+            b = rng.uniform(0.0, 2 * math.pi, m)
+            rr = r * np.sqrt(a)
+            cap = centre + rr[:, None] * (
+                np.cos(b)[:, None] * radial + np.sin(b)[:, None] * binormal
+            )
+            out.append(cap)
+    if not out:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.concatenate(out, axis=0)[:n].astype(np.float32)
+
+
+def panel_geometry(params: dict) -> tuple[float, float, float, float]:
+    """(width, height, thickness, bend_radians)."""
+    w, h = (float(v) for v in params.get("size", [1.0, 1.0]))
+    t = float(params.get("thickness", 0.02))
+    bend = float(params.get("bend", 0.0))
+    return w, h, t, bend
+
+
+def _panel_face_areas(w: float, h: float, t: float, bend: float) -> np.ndarray:
+    """Areas of (front, back, u0 edge, u1 edge, top, bottom). Exact for any bend."""
+    if abs(bend) < 1e-9:
+        return np.array([w * h, w * h, h * t, h * t, w * t, w * t], dtype=np.float64)
+    rc = w / abs(bend)
+    ab = abs(bend)
+    return np.array([
+        (rc + t / 2) * ab * h,
+        (rc - t / 2) * ab * h,
+        h * t,
+        h * t,
+        rc * ab * t,
+        rc * ab * t,
+    ], dtype=np.float64)
+
+
+def sample_panel(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
+    w, h, t, bend = panel_geometry(params)
+    if abs(bend) < 1e-9:
+        return sample_box(n, {"size": [w, h, t]}, rng)
+    rc = w / abs(bend)
+    areas = _panel_face_areas(w, h, t, bend)
+    counts = rng.multinomial(n, areas / areas.sum())
+
+    # Arc centred at (0, ·, rc): mid-surface passes through the origin and
+    # curves toward +z, so the panel stays centred like every other kind.
+    # bend < 0 mirrors the arc through the z=0 plane (curves toward −z).
+    zsign = -1.0 if bend < 0 else 1.0
+
+    def sheet(m: int, s: float) -> np.ndarray:
+        th = (rng.uniform(0.0, 1.0, m) - 0.5) * bend
+        y = rng.uniform(-h / 2, h / 2, m)
+        rho = rc + s
+        return np.stack([rho * np.sin(th), y, zsign * (rc - rho * np.cos(th))], axis=-1)
+
+    out = []
+    if counts[0]:
+        out.append(sheet(counts[0], +t / 2))
+    if counts[1]:
+        out.append(sheet(counts[1], -t / 2))
+    for idx, u_end in ((2, -0.5), (3, +0.5)):
+        if counts[idx]:
+            th = np.full(int(counts[idx]), u_end * bend)
+            y = rng.uniform(-h / 2, h / 2, int(counts[idx]))
+            s = rng.uniform(-t / 2, t / 2, int(counts[idx]))
+            rho = rc + s
+            out.append(np.stack([rho * np.sin(th), y, zsign * (rc - rho * np.cos(th))], axis=-1))
+    for idx, y_end in ((4, +h / 2), (5, -h / 2)):
+        if counts[idx]:
+            th = (rng.uniform(0.0, 1.0, int(counts[idx])) - 0.5) * bend
+            s = rng.uniform(-t / 2, t / 2, int(counts[idx]))
+            rho = rc + s
+            out.append(np.stack(
+                [rho * np.sin(th), np.full_like(th, y_end), zsign * (rc - rho * np.cos(th))], axis=-1))
+    return _stack(*out)
+
+
 SAMPLERS = {
     "box": sample_box,
     "sphere": sample_sphere,
@@ -278,6 +562,11 @@ SAMPLERS = {
     "prism": sample_prism,
     "helix": sample_helix,
     "plane": sample_plane,
+    "superellipsoid": sample_superellipsoid,
+    "tube": sample_tube,
+    "sweep": sample_tube,
+    "arch": sample_arch,
+    "panel": sample_panel,
 }
 
 
@@ -327,4 +616,163 @@ def primitive_area(kind: str, params: dict) -> float:
     if kind == "plane":
         sx, sz = params.get("size", [1, 1])
         return sx * sz
+    if kind == "superellipsoid":
+        # No closed form; estimate from a fixed tessellation (deterministic).
+        rx, ry, rz = (float(v) for v in params.get("radii", [0.5, 0.5, 0.5]))
+        e1, e2 = (float(v) for v in params.get("exponents", [1.0, 1.0]))
+        phi = np.linspace(-math.pi / 2, math.pi / 2, 13)
+        theta = np.linspace(0.0, 2 * math.pi, 25)
+        cp, sp = np.cos(phi), np.sin(phi)
+        ct, st = np.cos(theta), np.sin(theta)
+        x = rx * np.outer(_signed_pow(cp, e1), _signed_pow(ct, e2))
+        y = ry * np.outer(_signed_pow(sp, e1), np.ones_like(theta))
+        z = rz * np.outer(_signed_pow(cp, e1), _signed_pow(st, e2))
+        # Cell areas via cross products of grid diagonals.
+        du = np.stack([x[:-1, 1:] - x[:-1, :-1], y[:-1, 1:] - y[:-1, :-1], z[:-1, 1:] - z[:-1, :-1]], axis=-1)
+        dv = np.stack([x[1:, :-1] - x[:-1, :-1], y[1:, :-1] - y[:-1, :-1], z[1:, :-1] - z[:-1, :-1]], axis=-1)
+        return float(np.linalg.norm(np.cross(du, dv), axis=-1).sum())
+    if kind in ("tube", "sweep"):
+        pts, r1, r2 = tube_path_and_radii(params)
+        L = path_length(pts)
+        area = math.pi * (r1 + r2) * L
+        if params.get("caps", True):
+            area += math.pi * r1 * r1 + math.pi * r2 * r2
+        return area
+    if kind == "arch":
+        R, r, _, arc = arch_angles(params)
+        area = 2 * math.pi * r * R * arc
+        if params.get("caps", True):
+            area += 2 * math.pi * r * r
+        return area
+    if kind == "panel":
+        w, h, t, bend = panel_geometry(params)
+        return float(_panel_face_areas(w, h, t, bend).sum())
     return 1.0
+
+
+# ---------------------------------------------------------------------------
+# inside tests (CSG-lite subtraction, point-cloud level)
+# ---------------------------------------------------------------------------
+
+
+def inside_primitive(kind: str, params: dict, pts_local: np.ndarray) -> np.ndarray:
+    """Boolean mask: which *local-space* points lie strictly inside the solid.
+
+    Used by the compositor to carve `role: "subtract"` cutters out of host
+    parts. Falls back to the primitive's AABB for kinds without an exact test.
+    """
+    if pts_local.size == 0:
+        return np.zeros((0,), dtype=bool)
+    p = np.asarray(pts_local, dtype=np.float64).reshape(-1, 3)
+    x, y, z = p[:, 0], p[:, 1], p[:, 2]
+    if kind == "box":
+        sx, sy, sz = (float(v) for v in params.get("size", [1.0, 1.0, 1.0]))
+        return (np.abs(x) <= sx / 2) & (np.abs(y) <= sy / 2) & (np.abs(z) <= sz / 2)
+    if kind == "sphere":
+        r = float(params.get("radius", 0.5))
+        return (x * x + y * y + z * z) <= r * r
+    if kind == "ellipsoid":
+        rx, ry, rz = (float(v) for v in params.get("radii", [0.5, 0.5, 0.5]))
+        return (x / rx) ** 2 + (y / ry) ** 2 + (z / rz) ** 2 <= 1.0
+    if kind == "superellipsoid":
+        rx, ry, rz = (float(v) for v in params.get("radii", [0.5, 0.5, 0.5]))
+        e1, e2 = (float(v) for v in params.get("exponents", [1.0, 1.0]))
+        a = (np.abs(x / rx) ** (2.0 / e2) + np.abs(z / rz) ** (2.0 / e2)) ** (e2 / e1)
+        return (a + np.abs(y / ry) ** (2.0 / e1)) <= 1.0
+    if kind == "cylinder":
+        r = float(params.get("radius", 0.4))
+        h = float(params.get("height", 1.0))
+        return (x * x + z * z <= r * r) & (np.abs(y) <= h / 2)
+    if kind == "capsule":
+        r = float(params.get("radius", 0.3))
+        h = float(params.get("height", 1.0))
+        yc = np.clip(y, -h / 2, h / 2)
+        return (x * x + (y - yc) ** 2 + z * z) <= r * r
+    if kind == "cone":
+        r = float(params.get("radius", 0.5))
+        h = float(params.get("height", 1.0))
+        t = (y + h / 2) / h
+        rr = r * np.clip(1.0 - t, 0.0, None)
+        return (np.abs(y) <= h / 2) & (x * x + z * z <= rr * rr)
+    if kind == "prism":
+        sides = max(3, int(params.get("sides", 6)))
+        r = float(params.get("radius", 0.5))
+        h = float(params.get("height", 1.0))
+        ang = np.linspace(0.0, 2 * math.pi, sides, endpoint=False)
+        poly = np.stack([r * np.cos(ang), r * np.sin(ang)], axis=-1)
+        # Point-in-convex-polygon: consistent side of every edge.
+        inside = np.ones(p.shape[0], dtype=bool)
+        for i in range(sides):
+            a = poly[i]
+            b = poly[(i + 1) % sides]
+            edge = b - a
+            cross = edge[0] * (z - a[1]) - edge[1] * (x - a[0])
+            inside &= cross >= -1e-12
+        return inside & (np.abs(y) <= h / 2)
+    if kind in ("tube", "sweep"):
+        pts, r1, r2 = tube_path_and_radii(params)
+        # Distance from each point to every segment ≤ interpolated radius.
+        cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+        total = cum[-1] if cum[-1] > 0 else 1.0
+        r_vert = r1 + (r2 - r1) * (cum / total)
+        inside = np.zeros(p.shape[0], dtype=bool)
+        for s in range(pts.shape[0] - 1):
+            a, b = pts[s], pts[s + 1]
+            ab = b - a
+            denom = float(ab @ ab)
+            t = np.clip(((p - a) @ ab) / (denom + 1e-12), 0.0, 1.0)
+            d = np.linalg.norm(p - (a + t[:, None] * ab), axis=1)
+            r_s = r_vert[s] * (1.0 - t) + r_vert[s + 1] * t
+            inside |= d <= r_s
+        return inside
+    if kind == "arch":
+        R, r, start, arc = arch_angles(params)
+        # Closest point on the centre curve, then compare against tube radius.
+        u = np.arctan2(y, x)
+        # Unwrap u into the [start, start+arc] interval branch.
+        twopi = 2 * math.pi
+        u_rel = np.mod(u - start, twopi)
+        u_clamped = np.clip(u_rel, 0.0, arc) + start
+        cx, cy = R * np.cos(u_clamped), R * np.sin(u_clamped)
+        d = np.sqrt((x - cx) ** 2 + (y - cy) ** 2 + z * z)
+        return d <= r
+    if kind == "panel":
+        w, h, t, bend = panel_geometry(params)
+        if abs(bend) < 1e-9:
+            return (np.abs(x) <= w / 2) & (np.abs(y) <= h / 2) & (np.abs(z) <= t / 2)
+        rc = w / abs(bend)
+        zz = -z if bend < 0 else z  # negative bend mirrors through z=0
+        # Arc centred at (0, ·, rc): radius in the xz plane from the arc centre.
+        rho = np.sqrt(x * x + (zz - rc) ** 2)
+        th = np.arctan2(x, rc - zz)
+        eps = 1e-6  # float32 surface points sit a few ulp outside the boundary
+        return (
+            (np.abs(y) <= h / 2 + eps)
+            & (np.abs(th) <= abs(bend) / 2 + eps)
+            & (np.abs(rho - rc) <= t / 2 + eps)
+        )
+    # Fallback: torus / helix / plane / unknown — AABB test.
+    lo, hi = _fallback_aabb(kind, params)
+    return (
+        (x >= lo[0]) & (x <= hi[0])
+        & (y >= lo[1]) & (y <= hi[1])
+        & (z >= lo[2]) & (z <= hi[2])
+    )
+
+
+def _fallback_aabb(kind: str, params: dict) -> tuple[np.ndarray, np.ndarray]:
+    if kind == "torus":
+        R = float(params.get("major_radius", 0.5))
+        r = float(params.get("minor_radius", 0.15))
+        e = np.array([R + r, r, R + r])
+    elif kind == "helix":
+        R = float(params.get("radius", 0.4))
+        hh = float(params.get("pitch", 0.2)) * float(params.get("turns", 3.0)) / 2
+        t = float(params.get("thickness", 0.05))
+        e = np.array([R + t, hh + t, R + t])
+    elif kind == "plane":
+        sx, sz = (float(v) for v in params.get("size", [1.0, 1.0]))
+        e = np.array([sx / 2, 0.0, sz / 2])
+    else:
+        e = np.full(3, 0.5)
+    return -e, e

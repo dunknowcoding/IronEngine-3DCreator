@@ -1,8 +1,10 @@
 """LLM provider configuration panel.
 
-Provider dropdown, endpoint URL, model dropdown (auto-populated for Ollama and
-LMStudio, curated for Anthropic / OpenAI), API key (round-trips through the OS
-keychain), code-mode toggle, refresh button, and a 'Test connection' button.
+Provider dropdown, endpoint URL (defaults come from `llm.registry.default_endpoint`),
+model dropdown (auto-populated for Ollama and LMStudio, curated for the cloud
+providers in `registry.CLOUD_PROVIDERS`), API key (round-trips through the OS
+keychain; the field's placeholder shows where the key resolves from), code-mode
+toggle, refresh button, and a 'Test connection' button.
 """
 from __future__ import annotations
 
@@ -17,7 +19,13 @@ from ...core import secrets
 from ...llm import known_models
 from ...llm.lmstudio import LMStudioProvider
 from ...llm.ollama import OllamaProvider
-from ...llm.registry import PROVIDERS, make_provider
+from ...llm.registry import (
+    CLOUD_PROVIDERS,
+    PROVIDERS,
+    credential_hint,
+    default_endpoint,
+    make_provider,
+)
 from ..widgets.animated_panel import AnimatedPanel
 from ..widgets.cyber_button import CyberButton
 
@@ -142,18 +150,14 @@ class LLMConfigPanel(AnimatedPanel):
         s = self._settings
         eps = s.get("llm", "endpoints", default={})
         models = s.get("llm", "models", default={})
-        defaults = {
-            "ollama": "http://localhost:11434",
-            "lmstudio": "http://localhost:1234/v1",
-            "anthropic": "",
-            "openai": "",
-            "minimax": "https://api.minimaxi.com/v1",
-        }
-        self.endpoint.setText(eps.get(name, defaults.get(name, "")))
+        self.endpoint.setText(eps.get(name, default_endpoint(name)))
         self.api_key.setText(secrets.get_api_key(name) or "")
+        hint = credential_hint(name)
+        self.api_key.setPlaceholderText(hint)
+        self.api_key.setToolTip(hint)
 
         saved_model = models.get(name, "")
-        if name in ("anthropic", "openai", "minimax"):
+        if name in CLOUD_PROVIDERS:
             catalog = list(known_models.for_provider(name))
             if saved_model and saved_model not in catalog:
                 catalog.insert(0, saved_model)
@@ -179,7 +183,7 @@ class LLMConfigPanel(AnimatedPanel):
 
     def _refresh_models(self) -> None:
         name = self.provider.currentText()
-        if name in ("anthropic", "openai", "minimax"):
+        if name in CLOUD_PROVIDERS:
             catalog = list(known_models.for_provider(name))
             self._populate_model_dropdown(catalog, keep_current=True)
             self.model_hint.setText(f"{len(catalog)} curated cloud models")

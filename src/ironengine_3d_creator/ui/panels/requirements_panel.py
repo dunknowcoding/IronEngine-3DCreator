@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt
 from ...alignment.defaults import available_templates
 from ...alignment.schema import SHAPE_KINDS
 from ...core.pipeline import PipelineRequest
+from ...generation.style_engine import COMPLEXITY_LEVELS, STYLE_FAMILIES
 from ..widgets.animated_panel import AnimatedPanel
 from ..widgets.cyber_button import CyberButton
 
@@ -33,6 +34,26 @@ class RequirementsPanel(AnimatedPanel):
         for s in SHAPE_KINDS:
             self.shape.addItem(s)
         L.addWidget(self.shape)
+
+        style_row = QHBoxLayout()
+        style_row.addWidget(QLabel("Style"))
+        self.style = QComboBox()
+        self.style.addItem("auto")
+        self.style.addItem("random")
+        for f in STYLE_FAMILIES:
+            self.style.addItem(f)
+        self.style.setToolTip(
+            "Procedural style engine family. 'auto' routes on your description; "
+            "'random' picks a seeded random family (or mutates the LLM result)."
+        )
+        style_row.addWidget(self.style, 1)
+        style_row.addWidget(QLabel("Complexity"))
+        self.complexity = QComboBox()
+        for c in COMPLEXITY_LEVELS:
+            self.complexity.addItem(c)
+        self.complexity.setToolTip("Part-count budget for the style engine.")
+        style_row.addWidget(self.complexity, 1)
+        L.addLayout(style_row)
 
         L.addWidget(QLabel("Points"))
         self.points = QSlider(Qt.Orientation.Horizontal)
@@ -93,6 +114,8 @@ class RequirementsPanel(AnimatedPanel):
             legs=self.legs.value(),
             details=self.details.toPlainText().strip(),
             seed=self.seed.value(),
+            style=self.style.currentText(),
+            complexity=self.complexity.currentText(),
         )
 
     def _emit_auto(self) -> None:

@@ -1,14 +1,14 @@
 """Turn a GenerationSpec into (positions, colors) point cloud arrays."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from ..alignment.schema import GenerationSpec
 from .colorize import albedo_colors, base_color
 from .features import FEATURE_FUNCS, apply_fur, apply_holes, region_mask
-from .primitives import sample_primitive
+from .primitives import inside_primitive, sample_primitive
 from .sampler import allocate_budget
 from .textures import apply_texture, shape_default_material
 
@@ -19,6 +19,7 @@ class GenerationResult:
     colors: np.ndarray      # (N, 3) float32, in [0, 1]
     labels: np.ndarray      # (N,) int — index into spec.primitives
     label_names: list[str]
+    warnings: list[str] = field(default_factory=list)
 
 
 def _apply_transform(pts: np.ndarray, T: np.ndarray) -> np.ndarray:
@@ -28,10 +29,24 @@ def _apply_transform(pts: np.ndarray, T: np.ndarray) -> np.ndarray:
     return (h @ T.T)[:, :3]
 
 
+def _is_cutter(prim) -> bool:
+    return str((prim.params or {}).get("role", "")).lower() == "subtract"
+
+
 def generate(spec: GenerationSpec) -> GenerationResult:
     """Procedurally synthesize a point cloud from a validated spec."""
     rng = np.random.default_rng(spec.seed or None)
     counts = allocate_budget(spec.primitives, spec.n_points)
+    if any(_is_cutter(p) for p in spec.primitives):
+        # Cutters emit no points; renormalise the budget across the visible
+        # parts so the cloud still totals ≈ n_points.
+        counts = [0 if _is_cutter(p) else int(c)
+                  for p, c in zip(spec.primitives, counts)]
+        total = sum(counts)
+        if total > 0:
+            scale = spec.n_points / total
+            counts = [int(round(c * scale)) for c in counts]
+    warnings: list[str] = []
 
     chunks_pos: list[np.ndarray] = []
     chunks_lbl: list[np.ndarray] = []
@@ -40,11 +55,17 @@ def generate(spec: GenerationSpec) -> GenerationResult:
     base = base_color(spec.shape, spec.color)
 
     for i, (prim, n) in enumerate(zip(spec.primitives, counts)):
+        label_names.append(prim.label or f"{prim.kind}_{i}")
+        if _is_cutter(prim):
+            # Cutters never emit points of their own; they carve below.
+            chunks_pos.append(np.empty((0, 3), dtype=np.float32))
+            chunks_lbl.append(np.empty((0,), dtype=np.int32))
+            chunks_col.append(np.empty((0, 3), dtype=np.float32))
+            continue
         local = sample_primitive(prim.kind, n, prim.params, rng)
         world = _apply_transform(local, prim.transform_matrix())
         chunks_pos.append(world.astype(np.float32, copy=False))
         chunks_lbl.append(np.full(world.shape[0], i, dtype=np.int32))
-        label_names.append(prim.label or f"{prim.kind}_{i}")
 
         # Per-primitive material → either explicit "material" param or
         # heuristic from shape/label.
@@ -65,6 +86,45 @@ def generate(spec: GenerationSpec) -> GenerationResult:
         colors = np.concatenate(chunks_col, axis=0)
 
     label_lookup = {name: i for i, name in enumerate(label_names)}
+
+    # CSG-lite subtraction (point-cloud level): drop host points that fall
+    # inside a `role: "subtract"` cutter's solid.
+    cutters = [(i, p) for i, p in enumerate(spec.primitives) if _is_cutter(p)]
+    if cutters and positions.shape[0]:
+        keep = np.ones(positions.shape[0], dtype=bool)
+        for ci, cutter in cutters:
+            target = str((cutter.params or {}).get("target", "") or "")
+            T_inv = np.linalg.inv(cutter.transform_matrix().astype(np.float64))
+            local = _apply_transform(positions.astype(np.float64), T_inv)
+            inside = inside_primitive(cutter.kind, cutter.params or {}, local)
+            victims = inside & (labels != ci) & (labels >= 0)
+            if target:
+                ti = label_lookup.get(target)
+                if ti is None:
+                    warnings.append(
+                        f"subtract: cutter {label_names[ci]!r} target {target!r} not found — ignored"
+                    )
+                    continue
+                victims &= labels == ti
+            removed_per_part: dict[int, int] = {}
+            for idx in np.unique(labels[victims]):
+                removed_per_part[int(idx)] = int((victims & (labels == idx)).sum())
+            if not victims.any():
+                warnings.append(
+                    f"subtract: cutter {label_names[ci]!r} removed no points — no overlap?"
+                )
+            for part_i, removed in removed_per_part.items():
+                total_i = int((labels == part_i).sum())
+                if total_i and removed / total_i > 0.95:
+                    warnings.append(
+                        f"subtract: cutter {label_names[ci]!r} removed {removed}/{total_i} "
+                        f"points of {label_names[part_i]!r} — part nearly destroyed (orphan risk)"
+                    )
+            keep &= ~victims
+        if not keep.all():
+            positions = positions[keep]
+            colors = colors[keep]
+            labels = labels[keep]
 
     # In-place features (deformation / coloring).
     extras_pos: list[np.ndarray] = []
@@ -100,4 +160,5 @@ def generate(spec: GenerationSpec) -> GenerationResult:
         colors=np.clip(colors, 0.0, 1.0),
         labels=labels,
         label_names=label_names,
+        warnings=warnings,
     )

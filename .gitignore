@@ -60,6 +60,8 @@ site/
 
 # ─── Project artefacts ─────────────────────────────────────────────
 benchmark_out/             # tools/benchmark.py output (CSVs + PLY thumbnails)
+# demo artifacts (tools/demo_complex.py etc.)
+tools/out/
 *.iecreator.json.tmp       # session save atomic-write tempfiles
 exports/                   # ad-hoc PLY/PCD/GLB/OBJ exports
 

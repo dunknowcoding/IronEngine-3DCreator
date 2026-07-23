@@ -23,12 +23,19 @@ _ENV_VARS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "minimax": "MINIMAX_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
 }
 
 # Legacy Windows Credential Manager entries written by older tools. Checked
-# last so native IronEngine.3DCreator entries always win. (service, username)
+# last so native IronEngine.3DCreator entries always win. Each provider maps
+# to an ordered tuple of (service, username) candidates — the first hit wins.
 _LEGACY_TARGETS = {
-    "minimax": ("Paperfessor", "api-key:minimax"),
+    "minimax": (("Paperfessor", "api-key:minimax"),),
+    "deepseek": (
+        ("Paperfessor", "api-key:deepseek"),
+        ("Paperfessor", "deepseek"),
+        ("DeepSeek", "api-key"),
+    ),
 }
 
 _fallback: dict[str, str] = {}
@@ -58,13 +65,14 @@ def get_api_key(provider: str) -> str | None:
         except Exception:
             _log.exception("keyring read failed for %s", provider)
         legacy = _LEGACY_TARGETS.get(provider)
-        if legacy is not None:
-            try:
-                key = keyring.get_password(*legacy)
-                if key:
-                    return key
-            except Exception:
-                _log.exception("legacy keyring read failed for %s", provider)
+        if legacy:
+            for candidate in legacy:
+                try:
+                    key = keyring.get_password(*candidate)
+                    if key:
+                        return key
+                except Exception:
+                    _log.exception("legacy keyring read failed for %s via %s", provider, candidate)
     return None
 
 

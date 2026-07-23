@@ -65,7 +65,7 @@ def test_manifest_round_trip(tmp_path):
     write_manifest(out, manifest)
 
     loaded = json.loads(out.read_text(encoding="utf-8"))
-    assert loaded["schema"] == MANIFEST_SCHEMA == "iemodel/2"
+    assert loaded["schema"] == MANIFEST_SCHEMA == "iemodel/3"
     assert loaded["units"] == "meters"
     assert loaded["up_axis"] == "Y"
     # name comes from the export file stem (W24), not the spec shape.

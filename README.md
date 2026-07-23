@@ -9,7 +9,7 @@
   <img alt="Python" src="https://img.shields.io/pypi/pyversions/ironengine-3d-creator?logo=python&logoColor=white">
   <img alt="UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
   <img alt="Renderer" src="https://img.shields.io/badge/rendering-OpenGL%20%2B%20Open3D-6E40C9">
-  <img alt="LLM" src="https://img.shields.io/badge/LLM-Ollama%20%7C%20OpenAI%20%7C%20Anthropic%20%7C%20MiniMax-111827">
+  <img alt="LLM" src="https://img.shields.io/badge/LLM-Ollama%20%7C%20OpenAI%20%7C%20Anthropic%20%7C%20MiniMax%20%7C%20DeepSeek-111827">
   <img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-F59E0B">
 </p>
 
@@ -40,8 +40,10 @@ Most LLM-to-3D experiments fail in the same places: legs float, supports interse
 The workflow is:
 
 ```text
-Prompt -> SOUL rules -> LLM JSON spec -> validator -> integrity repair -> point-cloud sampler -> mesh reconstruction -> preview/export
+Prompt -> SOUL rules -> LLM JSON spec -> self-repair loop -> validator -> integrity repair -> point-cloud sampler -> mesh reconstruction -> preview/export
 ```
+
+The **self-repair loop** (`llm/repair.py`, wired into `core/pipeline.py`) validates the streamed answer before it is accepted: unparseable JSON, an empty primitive list, or a spec so incoherent that integrity repair would have to rewrite more than 30% of its parts is sent back to the model exactly once, together with the validator's error list. If the second attempt still fails, the pipeline falls back to the seeded, deterministic style engine — so the offline / no-key path behaves exactly as before.
 
 That keeps generations fast, seedable, reproducible, and much easier to repair than arbitrary mesh output.
 
@@ -80,8 +82,9 @@ The screenshots above were captured from the local app flow in the `IronEngineWo
 
 - **Structured generation**: the LLM returns a compact `GenerationSpec` of primitives, transforms, labels, and surface features.
 - **Deterministic integrity repair**: grounding, attachment, spacing, and framework repair happen after parsing so common structural failures are fixed automatically.
+- **Panel-native style families**: the procedural style engine emits true `panel` primitives for desktops, tabletops, seats, and chair-back slats — 2-element in-plane `size` plus a separate `thickness`, rotated flat (rx=π/2) for horizontal tops and left upright for vertical slats. The validator keeps a compat shim that converts legacy box-semantics 3-element panel sizes, so old LLM output and saved specs keep working.
 - **Real desktop UI**: PySide6-based editor with prompt controls, streaming token view, live viewport, mesh mode, and editing tools.
-- **Multiple model backends**: Ollama and LM Studio locally, plus Anthropic, OpenAI, and MiniMax in the cloud.
+- **Multiple model backends**: Ollama and LM Studio locally, plus Anthropic, OpenAI, MiniMax, and DeepSeek in the cloud.
 - **Renderer API included**: offscreen render helpers let you create RGBA previews without opening the full app.
 - **Package-ready layout**: Conda environment file, wheel manifest, packaged prompt rules, contributor guide, and changelog are included.
 
@@ -215,7 +218,9 @@ ironengine-3d-creator
 
 - Choose a provider in the right-side **LLM configuration** panel.
 - For local usage, use `ollama` with a `qwen3.5` model.
-- For cloud usage, use `anthropic`, `openai`, or `minimax`. MiniMax is OpenAI-compatible (endpoint `https://api.minimaxi.com/v1`, default model `MiniMax-M3`); its key resolves from the `MINIMAX_API_KEY` environment variable or the Windows Credential Manager, and it is covered by the `openai` extra.
+- For cloud usage, use `anthropic`, `openai`, `minimax`, or `deepseek`. The panel is driven by the provider registry (`llm/registry.py`), so each provider's default endpoint, curated model list, and credential source are filled in automatically; the API-key field's placeholder shows exactly where the key resolves from.
+  - **MiniMax** is OpenAI-compatible and defaults to the international endpoint `https://api.minimax.io/v1` (default model `MiniMax-M3`); keys issued for the China platform should change the endpoint to `https://api.minimaxi.com/v1`. Its key resolves from the `MINIMAX_API_KEY` environment variable, then the OS keychain, then legacy Credential Manager entries.
+  - **DeepSeek** is OpenAI-compatible (endpoint `https://api.deepseek.com`, default model `deepseek-chat`). Its key resolves from the `DEEPSEEK_API_KEY` environment variable, then the OS keychain, then legacy Credential Manager entries predating this app.
 - Turn on **Reasoning / thinking mode** when you want better deliberation and can afford slower generation.
 - Leave **Code mode** off unless you specifically want sandboxed Python generation instead of structured JSON specs.
 

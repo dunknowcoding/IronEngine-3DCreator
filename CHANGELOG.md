@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## 2026-07-23 (wiring wave)
+
+Self-repair wiring, DeepSeek in the UI, panel-native style families.
+
+- Wired the LLM self-repair loop (`llm/repair.py`) into `core/pipeline.py`: streamed specs are validated (parseable JSON, non-empty primitives, <=30% integrity churn) and get exactly one validator-feedback repair round before falling back to the seeded style engine. The offline / no-key path is unchanged.
+- The LLM config panel is now driven by `llm/registry.py` (`CLOUD_PROVIDERS`, `default_endpoint`, `credential_hint`): DeepSeek works from the UI (endpoint `https://api.deepseek.com`, key from env `DEEPSEEK_API_KEY` -> OS keychain -> legacy Credential Manager), MiniMax defaults to the international endpoint `https://api.minimax.io/v1`, and the API-key field shows where each provider's credential resolves from.
+- `generation/style_families.py` emits panel-native params for desktops/tabletops/seats (flat, rx=pi/2) and chair-back slats (upright): 2-element in-plane `size` + separate `thickness`. The validator's box-semantics compat shim is kept for legacy LLM output and saved specs.
+- Added `tools/out/` to `.gitignore` (demo artifacts).
+- Added `tests/test_pipeline_repair.py`, `tests/test_provider_registry_ui.py`, and `tests/test_style_panels.py`.
+
 ## 2026-07-23
 
 Realism milestone: analytic PBR export, `iemodel/2`, MiniMax provider, async handoff.

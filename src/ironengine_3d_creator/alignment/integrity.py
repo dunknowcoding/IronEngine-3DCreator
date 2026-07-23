@@ -130,6 +130,12 @@ def _local_aabb(prim: Primitive) -> tuple[np.ndarray, np.ndarray]:
     if prim.kind == "plane":
         sx, sz = p.get("size", [1, 1])
         return np.asarray([-sx / 2, 0.0, -sz / 2], dtype=np.float32), np.asarray([sx / 2, 0.0, sz / 2], dtype=np.float32)
+    if prim.kind in ("superellipsoid", "tube", "sweep", "arch", "panel"):
+        # Exact bounds (possibly asymmetric) live next to the mesh builders.
+        from ..generation.analytic_mesh import local_aabb
+
+        lo, hi = local_aabb(prim.kind, p)
+        return lo.astype(np.float32), hi.astype(np.float32)
     return np.asarray([-0.5, -0.5, -0.5], dtype=np.float32), np.asarray([0.5, 0.5, 0.5], dtype=np.float32)
 
 
@@ -156,6 +162,11 @@ def _world_aabb(prim: Primitive) -> tuple[np.ndarray, np.ndarray]:
 def _summary(prims: list[Primitive]) -> list[_PrimAABB]:
     out: list[_PrimAABB] = []
     for i, p in enumerate(prims):
+        if str((p.params or {}).get("role", "")).lower() == "subtract":
+            # Cutters define negative space, not structure: structural repair
+            # (back-attach, leg snapping, connectivity pulls) must neither
+            # move them nor reason about them as load-bearing parts.
+            continue
         lo, hi = _world_aabb(p)
         centre = (lo + hi) * 0.5
         half = (hi - lo) * 0.5
@@ -490,6 +501,137 @@ def _connectivity_sweep(spec: GenerationSpec, info: list[_PrimAABB], warnings: l
         info[:] = _summary(spec.primitives)  # refresh so the next primitive sees the new state
 
 
+_COS_40 = 0.7660444431  # cos(40°): tolerance for "vertical enough"
+
+
+def _repair_rotated_verticals(spec: GenerationSpec, info: list[_PrimAABB], warnings: list[str]) -> None:
+    """Upright slender vertical members (leg / vbar / stem) whose local long
+    axis has been rotated far away from world +Y — a classic LLM transform
+    mistake (e.g. a leg lying on its side).
+
+    A part is repaired only when:
+      - its local AABB is clearly elongated (long axis ≥ 1.75× the next), and
+      - the world direction of that long axis deviates from ±Y by > 40°.
+
+    The rebuild maps the long axis to +Y, preserves yaw by projecting the
+    most-horizontal other column onto the XZ plane, and keeps every column's
+    original scale plus the translation. Handedness is enforced (det > 0).
+    Runs *before* the shape-specific repairs so e.g. legs get snapped to the
+    floor *after* being uprighted.
+    """
+    framework_shapes = {
+        "fence", "lattice", "grid", "railing", "balustrade", "scaffold",
+        "gate", "trellis", "screen", "archway", "colonnade", "framework",
+    }
+    shape = (spec.shape or "").lower()
+    repaired = 0
+    for entry in info:
+        # `vbar` (bar / post / support / …) is only treated as a vertical
+        # member in framework shapes — on a chair, labels like
+        # "lumbar_support" describe intentional horizontal members.
+        if entry.role == "vbar" and shape not in framework_shapes:
+            continue
+        if entry.role not in ("leg", "vbar", "stem"):
+            continue
+        prim = spec.primitives[entry.index]
+        if (prim.params or {}).get("role") == "subtract":
+            continue
+        lo, hi = _local_aabb(prim)
+        ext = np.asarray(hi, dtype=np.float64) - np.asarray(lo, dtype=np.float64)
+        order = np.argsort(ext)[::-1]
+        long_axis = int(order[0])
+        second = float(ext[order[1]])
+        if second < 1e-9 or float(ext[long_axis]) < 1.75 * second:
+            continue  # not a slender member — leave it alone
+        T = np.asarray(prim.transform_matrix(), dtype=np.float64)
+        M = T[:3, :3]
+        scales = np.linalg.norm(M, axis=0)
+        if np.any(scales < 1e-12):
+            continue
+        U = M / scales
+        d = U[:, long_axis]
+        if abs(float(d[1])) >= _COS_40:
+            continue  # already upright enough
+
+        d_long = np.array([0.0, 1.0, 0.0])
+        # Yaw preservation: the other column with the largest horizontal
+        # projection defines the new horizontal facing.
+        best_j, best_proj = None, 0.0
+        for j in (a for a in range(3) if a != long_axis):
+            n = float(np.hypot(U[0, j], U[2, j]))
+            if n > best_proj:
+                best_j, best_proj = j, n
+        if best_j is None or best_proj < 1e-6:
+            d_j = np.array([1.0, 0.0, 0.0])
+            best_j = next(a for a in range(3) if a != long_axis)
+        else:
+            d_j = np.array([U[0, best_j], 0.0, U[2, best_j]]) / best_proj
+        k_axis = next(a for a in range(3) if a not in (long_axis, best_j))
+        d_k = np.cross(d_long, d_j)
+        n_k = np.linalg.norm(d_k)
+        if n_k < 1e-9:
+            d_k = np.array([0.0, 0.0, 1.0])
+        else:
+            d_k = d_k / n_k
+
+        dirs = {long_axis: d_long, best_j: d_j, k_axis: d_k}
+        R = np.column_stack([dirs[0], dirs[1], dirs[2]])
+        if np.linalg.det(R) < 0:
+            d_k = -d_k
+            dirs[k_axis] = d_k
+            R = np.column_stack([dirs[0], dirs[1], dirs[2]])
+        T[:3, :3] = R * scales  # broadcast: column j scaled by scales[j]
+        prim.transform = T.tolist()
+        repaired += 1
+        angle = float(np.degrees(np.arccos(min(1.0, abs(float(d[1]))))))
+        warnings.append(
+            f"integrity: uprighted rotated {entry.role} "
+            f"{entry.label or entry.kind!r} (long axis was {angle:.0f}° off vertical)"
+        )
+    if repaired:
+        info[:] = _summary(spec.primitives)
+
+
+def _flag_interpenetration(spec: GenerationSpec, info: list[_PrimAABB], warnings: list[str]) -> None:
+    """Warn when one part's AABB is mostly *swallowed* by another's.
+
+    Overlap joins are idiomatic in this engine (see SOUL.md — parts are
+    expected to interpenetrate at joints), so shallow overlap is fine. We
+    only flag the pathological case: overlap volume ≥ 60 % of the smaller
+    part's AABB volume, which almost always means the LLM dropped a part
+    inside another one by accident. Cutters (`role: "subtract"`) overlap
+    their hosts by design and are skipped.
+    """
+    info[:] = _summary(spec.primitives)
+    flagged: set[int] = set()
+    for i in range(len(info)):
+        a = info[i]
+        if (spec.primitives[a.index].params or {}).get("role") == "subtract":
+            continue
+        for b in info[i + 1:]:
+            if (spec.primitives[b.index].params or {}).get("role") == "subtract":
+                continue
+            lo = np.maximum(a.centre - a.half, b.centre - b.half)
+            hi = np.minimum(a.centre + a.half, b.centre + b.half)
+            span = hi - lo
+            if np.any(span <= 0):
+                continue
+            overlap = float(np.prod(span))
+            va = float(np.prod(2.0 * a.half))
+            vb = float(np.prod(2.0 * b.half))
+            v_small = min(va, vb)
+            if v_small <= 0.0:
+                continue
+            smaller, larger = (a, b) if va <= vb else (b, a)
+            if overlap >= 0.60 * v_small and smaller.index not in flagged:
+                warnings.append(
+                    f"integrity: part {smaller.label or smaller.kind!r} is "
+                    f"{overlap / v_small:.0%} inside {larger.label or larger.kind!r} — "
+                    f"possible accidental interpenetration"
+                )
+                flagged.add(smaller.index)
+
+
 # ---------------------------------------------------------------- entry point
 
 
@@ -500,6 +642,10 @@ def check_and_fix(spec: GenerationSpec) -> tuple[GenerationSpec, list[str]]:
     warnings: list[str] = []
     info = _summary(spec.primitives)
     shape = (spec.shape or "").lower()
+
+    # First: upright any leg/post/stem the LLM left lying on its side, so the
+    # shape-specific repairs below reason about correct orientations.
+    _repair_rotated_verticals(spec, info, warnings)
 
     if shape in ("chair", "stool", "table", "desk"):
         _repair_legs_seat(spec, info, warnings)
@@ -530,5 +676,8 @@ def check_and_fix(spec: GenerationSpec) -> tuple[GenerationSpec, list[str]]:
 
     # Final pass: anything still floating > 5 cm gets pulled to its neighbour.
     _connectivity_sweep(spec, info, warnings)
+
+    # Advisory only: flag parts that look accidentally swallowed by others.
+    _flag_interpenetration(spec, info, warnings)
 
     return spec, warnings

@@ -37,6 +37,12 @@ MINIMAX_MODELS = (
     "abab6.5s-chat",
 )
 
+DEEPSEEK_MODELS = (
+    "deepseek-chat",
+    "deepseek-v4-pro",
+    "deepseek-reasoner",
+)
+
 
 def for_provider(name: str) -> tuple[str, ...]:
     if name == "anthropic":
@@ -45,4 +51,6 @@ def for_provider(name: str) -> tuple[str, ...]:
         return OPENAI_MODELS
     if name == "minimax":
         return MINIMAX_MODELS
+    if name == "deepseek":
+        return DEEPSEEK_MODELS
     return ()

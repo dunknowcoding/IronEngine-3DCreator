@@ -73,12 +73,102 @@ class ThinkingFilter:
         return out
 
 
+_PAIRED_RE = re.compile(
+    r"(?:" + "|".join(re.escape(t) for t in _OPEN_TAGS) + r")"
+    r".*?"
+    r"(?:" + "|".join(re.escape(t) for t in _CLOSE_TAGS) + r")",
+    flags=re.DOTALL,
+)
+
+
+def _first_index(text: str, tags: tuple[str, ...]) -> int:
+    """Earliest occurrence of any tag, or -1."""
+    best = -1
+    for tag in tags:
+        idx = text.find(tag)
+        if idx != -1 and (best == -1 or idx < best):
+            best = idx
+    return best
+
+
+def _balanced_object_end(text: str, start: int) -> int:
+    """Index just past the balanced {...} object starting at `start`, or -1."""
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
+def _remove_tag_tokens(text: str) -> str:
+    """Remove stray tag tokens plus whitespace glued to them.
+
+    Models that misplace a tag inside their JSON answer usually pad it with
+    newlines (``"chair</think>\n\n","n_points"``); leaving the newlines
+    behind would produce invalid JSON (raw control chars inside a string),
+    so the glued whitespace goes with the tag.
+    """
+    for tag in _OPEN_TAGS + _CLOSE_TAGS:
+        text = re.sub(r"\s*" + re.escape(tag) + r"\s*", "", text)
+    return text
+
+
 def strip(text: str) -> str:
-    """One-shot removal of all <think>…</think> blocks (any alias)."""
-    pattern = re.compile(
-        r"(?:" + "|".join(re.escape(t) for t in _OPEN_TAGS) + r")"
-        r".*?"
-        r"(?:" + "|".join(re.escape(t) for t in _CLOSE_TAGS) + r")",
-        flags=re.DOTALL,
-    )
-    return pattern.sub("", text)
+    """One-shot removal of all <think>…</think> blocks (any alias).
+
+    Also handles two real-world failure modes the naive paired-block regex
+    cannot:
+
+    - **Misplaced close tag** (observed from MiniMax-M3 via api.minimax.io):
+      the model starts its JSON answer and *then* emits ``</think>`` a few
+      tokens later, e.g. ``…reasoning {"shape":"chair</think>","n_points":…``.
+      Removing open→close would behead the JSON. When the first ``{`` opens
+      an object that is *still unbalanced* when the close tag arrives, the
+      tag is embedded in the answer: we drop only the reasoning prose before
+      that ``{`` and remove the stray tag tokens, leaving the answer intact.
+      (A brace group that closes *before* the close tag is treated as an
+      example inside the reasoning and removed with it — normal path.)
+    - **Stray/unmatched tags**: any remaining open/close tag tokens are
+      removed after the paired-block pass so a truncated stream can never
+      leak a tag into the parser.
+    """
+    i_open = _first_index(text, _OPEN_TAGS)
+    i_close = _first_index(text, _CLOSE_TAGS)
+    if i_open == -1 and i_close == -1:
+        return text
+
+    i_brace = text.find("{")
+    if i_open != -1 and i_brace != -1 and i_open < i_brace:
+        obj_end = _balanced_object_end(text, i_brace)
+        # The brace group is the answer when it is unbalanced (truncated
+        # stream), when there is no close tag at all, or when it is still
+        # open when the close tag arrives (tag embedded in the answer).
+        answer_overruns_close = (
+            obj_end == -1 or i_close == -1 or obj_end > i_close
+        )
+        if answer_overruns_close:
+            # Misplaced/absent close tag: reasoning prose precedes the first
+            # '{' which begins the answer. Keep from the brace on, minus tags.
+            text = text[i_brace:]
+            return _remove_tag_tokens(text)
+
+    text = _PAIRED_RE.sub("", text)
+    # Stray tags (unmatched open, or close tags left over inside the answer).
+    return _remove_tag_tokens(text)

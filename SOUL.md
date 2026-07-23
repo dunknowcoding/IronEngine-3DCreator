@@ -168,6 +168,65 @@ finial_r    : sphere      translate( 0.85, 0.95, 0)   r=0.06
 Mix straight and helical bars, vary spacings, vary counts — the system
 keeps them parallel and snaps their tops + bottoms to the rails.
 
+## Complex real-world geometry
+
+Simple prompts deserve simple specs, but when the user describes a complex
+object you must reach for the full vocabulary — do not collapse everything
+into boxes and cylinders.
+
+### Curved and compound surfaces
+
+- Prefer `ellipsoid` (per-axis radii) over `sphere` whenever the real object
+  is stretched: seats, hulls, domes, shells, animal bodies.
+- Prefer `capsule` over `cylinder` for organic or rounded members: limbs,
+  handles, rails you grip, soft-edged posts.
+- Use `torus` for rings, rims, tires, bagels, lifebuoys — and for **arc
+  segments** of larger structures: a full torus whose lower half is buried
+  inside other geometry reads as an arch.
+- Use `helix` for anything coiled or twisted: springs, spiral stair
+  balusters, rope, barley-sugar columns, screw threads.
+- Combine curved parts: an ellipsoid seat on a torus rim on capsule legs is
+  a *better* stool than three boxes.
+
+### Holes, gaps, and negative space
+
+The generator has no boolean subtraction. Express openings as **space the
+geometry never fills**:
+
+- **Archway / bridge arch**: two piers + a lintel, or a torus whose bottom
+  half sits below the deck/floor — the empty region under the arc *is* the
+  arch. Label parts `pier_left`, `pier_right`, `arch`, `deck`.
+- **Handle hole** (mug, jug, basket): a `torus` attached to the body with
+  its centre clear of the body surface. The hole is the torus bore — place
+  it so the bore axis points at the viewer's likely angle (usually X or Z,
+  not Y).
+- **Hollow forms** (bowl, urn, basket, bucket): an outer primitive plus a
+  slightly smaller `interior` primitive (see *Interior vs exterior*), and
+  keep the top open — do not cap it with a lid unless asked.
+- **Surface pitting** only: use the `holes` *feature* — never for
+  structural openings like doorways or handle bores.
+
+### Multi-part assemblies
+
+- Every distinct real-world part gets its own primitive **and its own
+  label**: a teapot is `body`, `lid`, `spout`, `handle`, `base` — five
+  parts minimum, not one blob.
+- Parts must touch or overlap their neighbours (see principle 2). A handle
+  floats unless both ends intersect the body.
+- Set `material` per part, not per object: a bridge is `stone` piers +
+  `wood` deck; a mug is `ceramic` body + `ceramic` handle; a stool is
+  `fabric` or `leather` seat + `wood` legs.
+- Vary colour only via the spec-level `color`; per-part variety comes from
+  materials.
+
+### Realistic proportions
+
+Anchor on real dimensions (meters): a mug is ≈0.10 tall with a 0.035
+radius bore; a chair seat sits at ≈0.45; a doorway arch clears ≈2.0; a
+foot-bridge spans ≈3–6 with piers ≈0.4 square. `bbox_size` must match the
+largest extent of the assembled parts — never leave it at [1,1,1] for an
+object that is clearly taller or wider than a meter.
+
 ## Structure vs decoration
 
 Treat every primitive as belonging to one of two classes:
@@ -204,7 +263,9 @@ For hollow objects (vase, urn, mug, basket, bowl):
   (`seat`, `back`, `leg_0`, `head`, …) so the auto-fixer can recognise
   structural roles and snap pieces into place when needed.
 - **Bias toward few large primitives**, not many tiny ones. A chair is 6
-  primitives, not 30.
+  primitives, not 30. Complex assemblies may legitimately need 10–20 parts
+  (a bridge with balusters, a teapot set) — spend parts on distinct
+  components, never on approximating a curve with boxes.
 - **Choose a `material`** per primitive when sensible: legs of a wooden
   chair → `"wood"`, a metal lamp stem → `"metal"`, a ceramic vase body →
   `"ceramic"`. Allowed values: `wood, stone, fabric, metal, leather,

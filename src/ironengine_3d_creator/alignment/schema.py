@@ -22,6 +22,11 @@ PRIMITIVE_KINDS = (
     "prism",
     "helix",
     "plane",
+    "superellipsoid",
+    "tube",
+    "sweep",
+    "arch",
+    "panel",
 )
 
 FEATURE_KINDS = (

@@ -175,3 +175,43 @@ class TestEnvFallbacks:
         assert secrets.get_api_key("minimax") == "session-key"
         secrets.delete_api_key("minimax")
         assert secrets.get_api_key("minimax") is None
+
+
+# --------------------------------------------------------------- real API smoke
+@pytest.mark.real_api
+class TestMiniMaxRealAPISmoke:
+    """ONE real generation against the live MiniMax endpoint.
+
+    This is the only test in the suite allowed to touch the network. It is
+    opt-in: set IRONENGINE_REAL_API=1 to run it. It reads the real OS
+    keychain via the production secrets chain (the key is never printed or
+    persisted), and *skips* — never fails — on missing credentials or a
+    401, so CI without the key stays green.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_opt_in(self):
+        import os
+        if os.environ.get("IRONENGINE_REAL_API") != "1":
+            pytest.skip("real-API smoke is opt-in (set IRONENGINE_REAL_API=1)")
+
+    def test_tiny_chair_spec_generation(self, monkeypatch):
+        # Undo the file-level isolation: the whole point is the real chain.
+        monkeypatch.undo()
+        key = secrets.get_api_key("minimax")
+        if not key:
+            pytest.skip("no MiniMax key resolvable via core.secrets")
+        provider = make_provider("minimax", model="", api_key=key, json_mode=True)
+        try:
+            raw = "".join(provider.stream(
+                "You are a 3D spec generator. Return JSON only.",
+                "a simple wooden chair with four legs",
+            ))
+        except Exception as e:
+            status = getattr(e, "status_code", None) or getattr(e, "http_status", None)
+            if status == 401 or "401" in str(e):
+                pytest.skip(f"MiniMax returned 401 (key rejected): {e}")
+            raise
+        from ironengine_3d_creator.alignment.parser import parse_spec
+        spec = parse_spec(raw)  # raises if the answer isn't a parseable spec
+        assert spec is not None

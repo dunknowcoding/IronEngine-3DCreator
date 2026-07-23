@@ -203,10 +203,11 @@ def _archway() -> GenerationSpec:
                   {"radius": 0.15, "height": pillar_h, "caps": True}, "pillar_left"),
         Primitive("cylinder", _T((span / 2, pillar_h / 2 + 0.10, 0)),
                   {"radius": 0.15, "height": pillar_h, "caps": True}, "pillar_right"),
-        # The arch: half a torus; we approximate with a full torus then trim
-        # would require CSG, so just use a torus and let the renderer show
-        # both halves — visually still reads as an arch.
-        Primitive("torus", _T((0, pillar_h + 0.10, 0)),
+        # The arch: the dedicated `arch` kind — a true ∩ half-torus standing
+        # in the XY plane whose feet (local y = 0, x = ±major_radius) sit
+        # exactly on the pillar tops. Replaces the old full-torus hack that
+        # left a buried lower half.
+        Primitive("arch", _T((0, pillar_h + 0.10, 0)),
                   {"major_radius": span / 2, "minor_radius": 0.12}, "arch"),
         Primitive("sphere", _T((-span / 2, pillar_h + 0.30, 0)),
                   {"radius": 0.10}, "finial_left"),

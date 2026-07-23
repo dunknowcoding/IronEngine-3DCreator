@@ -8,7 +8,42 @@ Schema ``iemodel/2`` is a superset of ``iemodel/1``: every v1 field is still
 emitted (single ``material`` block as the majority fallback, ``mesh`` /
 ``point_cloud`` / ``spec`` blocks), plus per-part ``materials``/``parts`` and
 a physics block with measured solid volume, mass, and a collider hint chosen
-from the dominant primitive. Consumers must accept both versions.
+from the dominant primitive.
+
+Schema ``iemodel/3`` is a superset of ``iemodel/2`` (all v1/v2 fields intact)
+adding non-rigid body descriptions for downstream physics:
+
+- ``physics.body_type`` — one of ``rigid`` (default) | ``soft`` |
+  ``frangible`` | ``articulated``.
+- ``soft_body`` (top-level, only when body_type is ``soft``)::
+
+      {"kind": "cloth" | "rope",
+       "resolution": [w, h]        # cloth grid vertices, or
+       "segment_count": n,         # rope particle count
+       "mass_kg": float,
+       "stretch_stiffness": float, # 0..1, downstream scales to solver units
+       "bend_stiffness": float,    # 0..1
+       "damping": float,           # 0..1
+       "pin_indices": [int, ...]}  # grid-vertex / segment indices held fixed
+
+- ``fracture`` (top-level, only when body_type is ``frangible``)::
+
+      {"threshold_impulse": float,   # N*s; above this the body shatters
+       "fragment_count": int,        # target shard count
+       "pattern": "voronoi" | "shatter",
+       "debris_material": str}       # material preset name for fragments
+
+- ``articulation`` (top-level, only when body_type is ``articulated``)::
+
+      {"ragdoll": true,
+       "joints": [{"name": str, "kind": "ball" | "hinge",
+                   "parent": str, "child": str,   # part labels
+                   "axis": [x, y, z],             # unit vector; hinge flexion
+                                                 # axis, ball primary twist axis
+                   "limits_deg": [lo, hi]}, ...]}
+
+Consumers must accept v1, v2, and v3; unknown optional blocks should be
+ignored, not rejected.
 """
 from __future__ import annotations
 
@@ -24,7 +59,17 @@ from ..generation.materials import MATERIAL_PRESETS, default_preset, resolve_mat
 
 _log = logging.getLogger(__name__)
 
-MANIFEST_SCHEMA = "iemodel/2"
+MANIFEST_SCHEMA = "iemodel/3"
+
+# Legal values for physics.body_type (iemodel/3).
+BODY_TYPES = ("rigid", "soft", "frangible", "articulated")
+
+# Top-level optional blocks an extras mapping may contribute (iemodel/3).
+_NONRIGID_BLOCKS = ("soft_body", "fracture", "articulation")
+
+# Additional optional blocks passed through verbatim (CR extensions, e.g. the
+# cloth world-dimension block consumed by the Sim side — B1-CR).
+_EXTRA_PASSTHROUGH_BLOCKS = ("cloth",)
 
 # Primitives whose shape a box collider approximates well; everything organic
 # or curved gets a convex-hull hint instead.
@@ -97,12 +142,20 @@ def build_manifest(
     mesh_stats: dict | None = None,
     labels: np.ndarray | None = None,
     name: str | None = None,
+    extras: dict | None = None,
 ) -> dict:
-    """Assemble the iemodel/2 manifest dict for one exported model.
+    """Assemble the iemodel/3 manifest dict for one exported model.
 
     `labels` (per-point primitive indices from GenerationResult) enable
     measured per-part AABBs and per-part mean albedo; without them parts fall
     back to analytic AABBs and the spec base color.
+
+    `extras` (iemodel/3) is an optional mapping carried by non-rigid specs
+    (see ``generation.soft_author``): ``physics`` (e.g. ``body_type``,
+    ``mass_kg`` overrides) is merged into the physics block, and top-level
+    ``soft_body`` / ``fracture`` / ``articulation`` blocks are emitted
+    verbatim. When omitted, a ``manifest_extras`` attribute on the spec is
+    honored; otherwise the manifest describes a plain rigid body.
     """
     positions = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
     if positions.size:
@@ -199,7 +252,30 @@ def build_manifest(
             "primitive_kinds": sorted({getattr(p, "kind", "?") for p in prims}),
         }
 
-    return {
+    # ---- iemodel/3 non-rigid extras -----------------------------------------
+    if extras is None:
+        extras = getattr(spec, "manifest_extras", None) or {}
+    extra_physics = dict(extras.get("physics") or {})
+    body_type = str(extra_physics.pop("body_type", "rigid")).lower()
+    if body_type not in BODY_TYPES:
+        _log.warning("unknown physics.body_type %r; falling back to 'rigid'", body_type)
+        body_type = "rigid"
+
+    physics = {
+        "density_kg_m3": preset["density_kg_m3"],
+        "friction": preset["friction"],
+        "restitution": preset["restitution"],
+        "collider": _choose_collider(parts),
+        "dynamic": True,
+        "solid_volume_m3": solid_volume,
+        "mass_kg": mass_kg,
+        "body_type": body_type,
+    }
+    # Explicit extras win over computed values (e.g. measured sheet mass for
+    # zero-thickness cloth whose analytic solid volume is 0).
+    physics.update(extra_physics)
+
+    manifest = {
         "schema": MANIFEST_SCHEMA,
         "name": name,
         "generator": f"ironengine-3d-creator {__version__}",
@@ -218,19 +294,16 @@ def build_manifest(
         },
         "materials": materials,
         "parts": parts,
-        "physics": {
-            "density_kg_m3": preset["density_kg_m3"],
-            "friction": preset["friction"],
-            "restitution": preset["restitution"],
-            "collider": _choose_collider(parts),
-            "dynamic": True,
-            "solid_volume_m3": solid_volume,
-            "mass_kg": mass_kg,
-        },
+        "physics": physics,
         "mesh": mesh_block,
         "point_cloud": cloud_block,
         "spec": spec_block,
     }
+    for key in _NONRIGID_BLOCKS + _EXTRA_PASSTHROUGH_BLOCKS:
+        block = extras.get(key)
+        if block:
+            manifest[key] = block
+    return manifest
 
 
 def write_manifest(path: str | Path, manifest: dict) -> None:

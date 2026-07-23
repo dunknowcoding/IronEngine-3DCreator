@@ -302,6 +302,27 @@ def _write_glb_scene(path: Path, parts, positions, colors, texture_size: int) ->
     scene.export(str(path), file_type="glb")
 
 
+def write_glb_parts(
+    path: Path,
+    parts,
+    positions: np.ndarray | None = None,
+    colors: np.ndarray | None = None,
+    *,
+    texture_size: int = 256,
+) -> Path:
+    """Write a GLB directly from pre-built analytic parts (one named node per
+    part, per-part PBR materials, baked albedo textures, COLOR_0 colors).
+
+    This is the export path for generators that build their own exact meshes
+    instead of spec primitives — e.g. ``generation.soft_author`` cloth sheets,
+    ropes, frangible vessels, and ragdoll body parts.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_glb_scene(path, list(parts), positions, colors, max(16, int(texture_size)))
+    return path
+
+
 def write_glb(
     path: Path,
     positions: np.ndarray,
