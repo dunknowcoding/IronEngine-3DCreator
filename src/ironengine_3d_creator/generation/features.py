@@ -3,12 +3,53 @@
 Each `apply_*` operates in place on a (positions, colors, labels) tuple where
 positions: (N, 3) float32, colors: (N, 3) float32, labels: (N,) int (the index
 of the originating primitive — used to scope features to a region).
+
+Displacement features move points along *estimated local surface normals*
+(KDTree + PCA per neighborhood, W11) instead of the centroid-radial direction,
+so boxes/cylinders deform perpendicular to their actual surface rather than
+pinching or ballooning sideways.
 """
 from __future__ import annotations
 
 import math
 
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Local surface-normal estimation
+# ---------------------------------------------------------------------------
+
+
+def estimate_surface_normals(pts: np.ndarray, k: int = 12) -> np.ndarray:
+    """Per-point normals via KDTree + PCA (smallest-covariance-eigenvector).
+
+    Normals are oriented to agree with the centroid-radial direction so
+    outward displacements stay outward. Falls back to centroid-radial when
+    scipy is unavailable or the set is too small.
+    """
+    pts = np.asarray(pts, dtype=np.float64)
+    n_pts = pts.shape[0]
+    centroid = pts.mean(axis=0)
+    radial = pts - centroid
+    radial /= np.linalg.norm(radial, axis=1, keepdims=True) + 1e-9
+    if n_pts < 4:
+        return radial.astype(np.float32)
+    try:
+        from scipy.spatial import cKDTree  # type: ignore
+    except Exception:  # pragma: no cover - scipy always present in the env
+        return radial.astype(np.float32)
+
+    k = int(min(max(k, 4), n_pts))
+    _, idx = cKDTree(pts).query(pts, k=k, workers=-1)
+    nbrs = pts[idx]                                       # (N, k, 3)
+    centered = nbrs - nbrs.mean(axis=1, keepdims=True)
+    cov = np.einsum("nki,nkj->nij", centered, centered) / k
+    _, evecs = np.linalg.eigh(cov)                        # ascending eigenvalues
+    normals = evecs[:, :, 0]                              # smallest eigenvalue
+    sign = np.sign(np.einsum("ij,ij->i", normals, radial))
+    sign[sign == 0.0] = 1.0
+    return (normals * sign[:, None]).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +138,8 @@ def apply_curve_pattern(
         return
     idxs = np.where(mask)[0]
     pts = positions[idxs]
-    centroid = pts.mean(axis=0)
-    radial = pts - centroid
-    rnorm = np.linalg.norm(radial, axis=1, keepdims=True) + 1e-9
-    n = radial / rnorm
-    # Sinusoidal radial perturbation along Y → "ribbed" / wavy bands.
+    n = estimate_surface_normals(pts)
+    # Sinusoidal displacement along Y → "ribbed" / wavy bands.
     phase = freq * pts[:, 1]
     positions[idxs] = pts + n * (amp * np.sin(phase))[:, None]
 
@@ -120,10 +158,7 @@ def apply_bump_field(
         return
     idxs = np.where(mask)[0]
     pts = positions[idxs]
-    centroid = pts.mean(axis=0)
-    radial = pts - centroid
-    rnorm = np.linalg.norm(radial, axis=1, keepdims=True) + 1e-9
-    nrm = radial / rnorm
+    nrm = estimate_surface_normals(pts)
     # Pick `count` random "bump centers" from the surface itself, then push points within radius outward.
     centers = pts[rng.choice(pts.shape[0], size=count, replace=False)]
     for c in centers:
@@ -165,10 +200,7 @@ def apply_erosion(
         return
     idxs = np.where(mask)[0]
     pts = positions[idxs]
-    centroid = pts.mean(axis=0)
-    radial = pts - centroid
-    rnorm = np.linalg.norm(radial, axis=1, keepdims=True) + 1e-9
-    nrm = radial / rnorm
+    nrm = estimate_surface_normals(pts)
     jitter = rng.uniform(-strength, 0.0, idxs.size)  # only inward
     positions[idxs] = pts + nrm * jitter[:, None]
     # Random small color variation for visual richness.
@@ -188,11 +220,11 @@ def apply_ridges(
         return
     idxs = np.where(mask)[0]
     pts = positions[idxs]
-    centroid = pts.mean(axis=0)
-    radial = pts - centroid
-    rnorm = np.linalg.norm(radial, axis=1, keepdims=True) + 1e-9
-    nrm = radial / rnorm
-    # Vertical ridges: rotate around Y, partition by angular bin.
+    nrm = estimate_surface_normals(pts)
+    # Vertical ridges: rotate around Y, partition by angular bin. The angle is
+    # measured from the centroid (a radial property), but displacement follows
+    # the estimated surface normal.
+    radial = pts - pts.mean(axis=0)
     angle = np.arctan2(radial[:, 2], radial[:, 0])
     band = np.cos(angle * count)
     positions[idxs] = pts + nrm * (depth * band)[:, None]
@@ -242,10 +274,7 @@ def apply_fur(
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.float32)
     idxs = np.where(mask)[0]
     pts = positions[idxs]
-    centroid = pts.mean(axis=0)
-    radial = pts - centroid
-    rnorm = np.linalg.norm(radial, axis=1, keepdims=True) + 1e-9
-    nrm = radial / rnorm
+    nrm = estimate_surface_normals(pts)
     n_extra = int(idxs.size * density)
     if n_extra == 0:
         return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.float32)

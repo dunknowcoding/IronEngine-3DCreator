@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..alignment.schema import GenerationSpec
-from ..core import exporter
+from ..core import exporter, manifest as iemanifest
 from ..core.pipeline import PipelineRequest, PipelineResult, replay_spec
 from ..core.session import Session, SessionRequirements
 from ..core.settings import Settings
@@ -71,6 +71,11 @@ class MainWindow(QMainWindow):
         self._gen_worker = None  # held to defeat Python GC while the thread runs
         self._mesh_thread: QThread | None = None
         self._mesh_worker = None
+        self._handoff_thread: QThread | None = None
+        self._handoff_worker = None
+        # Artifacts of the most recent successful handoff/export — round-tripped
+        # through session save/load (W22).
+        self._last_handoff: Optional[dict] = None
         # Edit-stroke throttle: redraws are rate-limited to ~60 fps so a brush
         # drag on a 500k-point cloud doesn't spend its whole budget re-uploading
         # the VBO. The flag is set on every edit step and cleared by the timer.
@@ -206,8 +211,12 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
 
         send_btn = CyberButton("⮕ Send to SceneEditor")
-        send_btn.setToolTip("Export PLY to the user_models library and open SceneEditor")
-        send_btn.clicked.connect(self._render_in_sim)
+        send_btn.setToolTip(
+            "Export PLY + GLB mesh + .iemodel.json manifest to the user_models "
+            "library, then open SceneEditor on the manifest"
+        )
+        send_btn.clicked.connect(self._send_to_scene_editor)
+        self._send_btn = send_btn
         tb.addWidget(send_btn)
 
         # Right-side widgets ----------------------------------------------
@@ -310,6 +319,10 @@ class MainWindow(QMainWindow):
             provider = None
             req.user_prompt = ""
 
+        # Enforce the Resources-panel RAM cap inside the pipeline (clamps
+        # n_points and surfaces a warning) instead of letting it be UI theater.
+        req.ram_cap_mb = int(self._settings.get("resources", "ram_cap_mb", default=0) or 0)
+
         think_on = bool(self.llm_config.think_mode.isChecked())
         self.token_stream.begin("connecting…", think_mode_on=think_on)
         self.progress.start("aligning…")
@@ -366,6 +379,9 @@ class MainWindow(QMainWindow):
         ):
             if btn is not None:
                 btn.setEnabled(has_cloud)
+        send_btn = getattr(self, "_send_btn", None)
+        if send_btn is not None:
+            send_btn.setEnabled(has_cloud and self._handoff_thread is None)
 
     def _on_error(self, msg: str) -> None:
         self.token_stream.end()
@@ -523,79 +539,147 @@ class MainWindow(QMainWindow):
         self.viewport.frame_all()
 
     def _render_in_sim(self) -> None:
-        """Export to PLY in the configured target dir, then hand off to a
-        renderer. Tries IronEngine-SceneEditor first (which loads PLY through
-        its asset library), then falls back to the system default viewer.
-        """
+        """Deprecated alias kept for compatibility — use _send_to_scene_editor."""
+        self._send_to_scene_editor()
+
+    # ------------------------------------------------------- SceneEditor handoff
+    def _send_to_scene_editor(self) -> None:
+        """Kick off the export triple (PLY + GLB + .iemodel.json manifest) on a
+        worker thread, then hand the manifest to SceneEditor. Reconstruction
+        and the PLY writer are far too slow to run on the UI thread (same
+        reason the mesh preview uses MeshWorker)."""
         if self._latest is None:
-            QMessageBox.information(self, "Nothing to render", "Generate a model first.")
+            QMessageBox.information(self, "Nothing to send", "Generate a model first.")
+            return
+        if self._handoff_thread is not None:
+            self.status.showMessage("export already running — please wait", 3000)
             return
         target = self.resources.export_target()
         target.mkdir(parents=True, exist_ok=True)
-        path = target / f"creator_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ply"
-        try:
-            exporter.write_ply(path, self._latest.generation.positions, self._latest.generation.colors)
-        except Exception as e:
-            QMessageBox.warning(self, "Export failed", str(e))
-            return
+        gen = self._latest.generation
+        base = target / f"creator_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+        from .workers import start_handoff_worker
+
+        self._send_btn.setEnabled(False)
+        self.progress.start("exporting for SceneEditor…")
+        thread, worker = start_handoff_worker(
+            self, self._latest.spec, gen.positions, gen.colors, base,
+            labels=getattr(gen, "labels", None),
+        )
+        worker.stage.connect(self._on_handoff_stage)
+        worker.done.connect(self._on_handoff_done)
+        worker.error.connect(self._on_handoff_error)
+        worker.finished.connect(self._on_handoff_finished)
+        # Keep both on `self` — same GC/lifetime reasoning as the gen worker.
+        self._handoff_thread = thread
+        self._handoff_worker = worker
+        thread.start()
+
+    def _on_handoff_stage(self, stage: str) -> None:
+        self.progress.set_stage(stage)
+        self.status.showMessage(stage)
+
+    def _on_handoff_done(self, result) -> None:
+        self._last_handoff = {
+            "ply": str(result.ply_path),
+            "glb": str(result.glb_path) if result.glb_path else None,
+            "manifest": str(result.manifest_path) if result.manifest_path else None,
+            "handoff": str(result.handoff_path) if result.handoff_path else None,
+            "created_utc": datetime.now().isoformat(),
+        }
+        artifacts = [result.ply_path.name]
+        if result.glb_path is not None:
+            artifacts.append(result.glb_path.name)
+        if result.manifest_path is not None:
+            artifacts.append(result.manifest_path.name)
+        artifacts_s = " + ".join(artifacts)
+
+        launched = self._launch_scene_editor(result)
+        if launched == "scene_editor":
+            self.status.showMessage(f"Wrote {artifacts_s} → SceneEditor opening on the manifest", 7000)
+        elif launched:
+            self.status.showMessage(f"Wrote {artifacts_s}, opening in {launched}", 5000)
+        else:
+            self._open_in_system_viewer(result, artifacts_s)
+        if result.warnings:
+            self.status.showMessage("handoff warnings: " + "; ".join(result.warnings), 9000)
+
+    def _launch_scene_editor(self, result) -> Optional[str]:
+        """Launch the best available viewer. Returns a label for status text,
+        or None if nothing could be launched. SceneEditor is launched with
+        `--import <manifest>` so it consumes materials/physics metadata; if
+        that launch fails we retry with the legacy no-arg invocation."""
         import importlib.util
-        import os
         import subprocess
         import sys
 
-        # Try installed renderers in priority order. SceneEditor doesn't take
-        # a CLI path — it discovers PLY/PCD via its asset library scan, which
-        # we already taught about our suffixes. So we just launch it.
-        candidates: list[tuple[str, list[str], bool]] = [
-            ("ironengine_scene_editor", [], False),  # SceneEditor: no path arg
-            ("ironengine_sim.tools.point_cloud_viewer", [], True),
-            ("ironengine_sim", ["--render"], True),
-        ]
-        launched_module: str | None = None
-        for module, extra, pass_path in candidates:
+        def _importable(module: str) -> bool:
             try:
-                if importlib.util.find_spec(module) is None:
-                    continue
+                return importlib.util.find_spec(module) is not None
             except (ImportError, ValueError):
-                continue
-            argv = [sys.executable, "-m", module, *extra]
-            if pass_path:
-                argv.append(str(path))
+                return False
+
+        def _popen(argv: list[str]) -> bool:
             try:
                 subprocess.Popen(argv, close_fds=True)
-                launched_module = module
-                break
+                return True
             except Exception:
-                continue
+                _log.exception("failed to launch %r", argv)
+                return False
 
-        if launched_module == "ironengine_scene_editor":
-            self.status.showMessage(
-                f"Wrote {path.name} → SceneEditor opening; refresh Asset Browser to see it",
-                7000,
+        if _importable("ironengine_scene_editor"):
+            manifest_arg = (
+                str(result.manifest_path.resolve()) if result.manifest_path else None
             )
-            return
-        if launched_module:
-            self.status.showMessage(
-                f"Wrote {path.name}, opening in {launched_module}", 5000,
-            )
-            return
+            if manifest_arg and _popen(
+                [sys.executable, "-m", "ironengine_scene_editor", "--import", manifest_arg]
+            ):
+                return "scene_editor"
+            # Legacy fallback: older SceneEditor without --import support.
+            if _popen([sys.executable, "-m", "ironengine_scene_editor"]):
+                return "scene_editor"
+
+        # Legacy Sim-era fallbacks, kept for users without SceneEditor.
+        if _importable("ironengine_sim.tools.point_cloud_viewer") and _popen(
+            [sys.executable, "-m", "ironengine_sim.tools.point_cloud_viewer", str(result.ply_path)]
+        ):
+            return "ironengine_sim.tools.point_cloud_viewer"
+        if _importable("ironengine_sim") and _popen(
+            [sys.executable, "-m", "ironengine_sim", "--render", str(result.ply_path)]
+        ):
+            return "ironengine_sim"
+        return None
+
+    def _open_in_system_viewer(self, result, artifacts_s: str) -> None:
+        import os
         try:
-            os.startfile(str(path))
+            os.startfile(str(result.ply_path))
             self.status.showMessage(
-                f"Wrote {path} (no Sim/SceneEditor module found — opened in system viewer)",
+                f"Wrote {artifacts_s} (no SceneEditor/Sim module found — opened in system viewer)",
                 7000,
             )
         except Exception as e:
             QMessageBox.warning(
                 self, "Launch failed",
-                f"Wrote {path}\n\nCould not launch a viewer: {e}",
+                f"Wrote {result.ply_path}\n\nCould not launch a viewer: {e}",
             )
+
+    def _on_handoff_error(self, msg: str) -> None:
+        QMessageBox.warning(self, "Export failed", msg)
+        self.status.showMessage("handoff export failed — see warning", 8000)
+
+    def _on_handoff_finished(self) -> None:
+        self.progress.stop()
+        self._handoff_thread = None
+        self._handoff_worker = None
+        self._send_btn.setEnabled(self.viewport.has_cloud())
 
     # --------------------------------------------------------- session I/O
     def _new_session(self) -> None:
         self._latest = None
         self._history.clear()
+        self._last_handoff = None
         self.viewport.set_cloud(np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.float32))
         self.token_stream.end()
         self._refresh_action_states()
@@ -608,18 +692,39 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Save session", "session.iecreator.json", "Session (*.iecreator.json)")
         if not path:
             return
+        details = self.requirements.details.toPlainText()
+        # Round-trip the export/manifest/material state so a reopened session
+        # knows where its artifacts went and which material they carried.
+        export_state: dict = {"target_dir": str(self.resources.export_target())}
+        try:
+            manifest = iemanifest.build_manifest(
+                self._latest.spec,
+                self._latest.generation.positions,
+                self._latest.generation.colors,
+            )
+            export_state["manifest"] = manifest
+            export_state["material"] = manifest.get("material", {})
+            if manifest.get("physics"):
+                export_state["physics"] = manifest["physics"]
+        except Exception:
+            _log.exception("failed to capture manifest state for session")
+        if self._last_handoff:
+            export_state["last_handoff"] = self._last_handoff
         sess = Session(
             requirements=SessionRequirements(
-                prompt=self.requirements.details.toPlainText(),
+                # prompt is intentionally empty — the free-form text lives in
+                # `details`; duplicating it into both fields only let them
+                # drift apart (W22).
+                prompt="",
                 shape=self.requirements.shape.currentText(),
                 n_points=self.requirements.points.value(),
                 bbox=(self.requirements.bx.value(), self.requirements.by.value(), self.requirements.bz.value()),
                 legs=self.requirements.legs.value(),
-                details=self.requirements.details.toPlainText(),
+                details=details,
             ),
             spec=self._latest.spec.to_json(),
             seed=self._latest.spec.seed,
-            export={},
+            export=export_state,
         )
         sess.save(Path(path))
         self.status.showMessage(f"saved {path}", 4000)
@@ -629,17 +734,34 @@ class MainWindow(QMainWindow):
         if not path:
             return
         sess = Session.load(Path(path))
-        # Restore requirements UI.
-        self.requirements.details.setPlainText(sess.requirements.details)
+        # Restore requirements UI. Old sessions duplicated details into
+        # `prompt`; fall back to it when `details` is empty.
+        self.requirements.details.setPlainText(sess.requirements.details or sess.requirements.prompt)
+        shape_idx = self.requirements.shape.findText(sess.requirements.shape)
+        if shape_idx >= 0:
+            self.requirements.shape.setCurrentIndex(shape_idx)
         self.requirements.points.setValue(sess.requirements.n_points)
         self.requirements.bx.setValue(sess.requirements.bbox[0])
         self.requirements.by.setValue(sess.requirements.bbox[1])
         self.requirements.bz.setValue(sess.requirements.bbox[2])
         self.requirements.legs.setValue(sess.requirements.legs)
+        self.requirements.seed.setValue(sess.seed)
+        # Restore the export/manifest/material state captured at save time.
+        export_state = sess.export or {}
+        target_dir = export_state.get("target_dir")
+        if target_dir:
+            self.resources.target.setText(str(target_dir))
+        self._last_handoff = export_state.get("last_handoff") or None
+        material = export_state.get("material") or {}
         # Replay the spec deterministically.
         spec = GenerationSpec.from_json(sess.spec)
         self._on_rerun_from_spec(spec)
-        self.status.showMessage(f"opened {path}", 4000)
+        msg = f"opened {path}"
+        if material.get("name"):
+            msg += f" · material: {material['name']}"
+        if self._last_handoff and self._last_handoff.get("manifest"):
+            msg += f" · last manifest: {Path(self._last_handoff['manifest']).name}"
+        self.status.showMessage(msg, 6000)
 
     def _export(self) -> None:
         if self._latest is None:
@@ -655,12 +777,39 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            written = exporter.export(Path(path), self._latest.generation.positions, self._latest.generation.colors)
+            gen = self._latest.generation
+            written = exporter.export(Path(path), gen.positions, gen.colors)
+            self._write_export_sidecar(written, gen)
             self.status.showMessage(f"exported {written}", 6000)
         except ImportError as e:
             QMessageBox.warning(self, "Export needs Open3D", str(e))
         except Exception as e:
             QMessageBox.warning(self, "Export failed", str(e))
+
+    def _write_export_sidecar(self, written: Path, gen) -> None:
+        """Write a sibling .iemodel.json manifest next to GLB/PLY exports."""
+        fmt = written.suffix.lower()
+        if fmt not in (".glb", ".ply"):
+            return
+        try:
+            mesh_path = None
+            mesh_stats = None
+            cloud_path = None
+            if fmt == ".glb":
+                from ..generation.reconstruct import reconstruct
+                rec = reconstruct(gen.positions)  # cache hit — exporter just built it
+                mesh_path = written
+                mesh_stats = {"vertices": int(rec.positions.shape[0]),
+                              "faces": int(rec.indices.size // 3)}
+            else:
+                cloud_path = written
+            manifest = iemanifest.build_manifest(
+                self._latest.spec, gen.positions, gen.colors,
+                mesh_path=mesh_path, point_cloud_path=cloud_path, mesh_stats=mesh_stats,
+            )
+            iemanifest.write_manifest(written.with_suffix(".iemodel.json"), manifest)
+        except Exception:
+            _log.exception("failed to write export manifest sidecar")
 
     # --------------------------------------------------------------- theme
     def _show_user_guide(self) -> None:

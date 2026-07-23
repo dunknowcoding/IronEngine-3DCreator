@@ -89,18 +89,25 @@ prompt, spec, seed and edit history — open it later to iterate.
 
 ## 6. Send to SceneEditor
 
-The toolbar's `⮕ Send to SceneEditor` button writes the current cloud
-to the user-models library (`%LOCALAPPDATA%\\IronEngine\\user_models`)
-and launches SceneEditor. The asset browser there scans the same
-folder, so refreshing it surfaces your new model immediately. Drag it
+The toolbar's `⮕ Send to SceneEditor` button writes an export triple —
+PLY point cloud, GLB mesh (exact analytic meshes with PBR materials when
+the model came from a spec), and an `iemodel/2` manifest carrying
+per-part materials and physics — to the user-models library
+(`%LOCALAPPDATA%\\IronEngine\\user_models`), drops a `handoff.json`
+pointer next to it, and launches SceneEditor with
+`--import <manifest>`. SceneEditor imports the manifest directly, so
+units, materials and physics metadata survive the trip; drag the model
 into a scene to attach it as a `point_cloud` component.
 
 ## 7. Resource panel
 
-* **Acceleration backend** — auto-detects CUDA via CuPy / Torch, falls
-  back to Taichi (cross-vendor), then NumPy. Override if you want.
-* **RAM / VRAM caps** — advisory limits; generation is throttled or
-  warns before exceeding them.
+* **Acceleration backend** — `auto`, `cuda_cupy` or `cpu_numpy`.
+  `auto` prefers CUDA via CuPy and falls back to NumPy. Torch and
+  Taichi installs are still detected and listed for information, but
+  they are not selectable backends (no torch/taichi hot paths).
+* **RAM cap** — enforced: the point budget is clamped before
+  generation so the estimated footprint fits the cap (a warning tells
+  you when clamping happened). The VRAM cap is advisory.
 * **Export target** — defaults to the SceneEditor library folder.
   Change to a project-local `assets/models/` if you prefer.
 

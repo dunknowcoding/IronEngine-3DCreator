@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..alignment.schema import GenerationSpec
-from .colorize import base_color, shaded_colors
+from .colorize import albedo_colors, base_color
 from .features import FEATURE_FUNCS, apply_fur, apply_holes, region_mask
 from .primitives import sample_primitive
 from .sampler import allocate_budget
@@ -51,7 +51,8 @@ def generate(spec: GenerationSpec) -> GenerationResult:
         material = prim.params.get("material") or shape_default_material(spec.shape, prim.label)
         textured = apply_texture(world, tuple(base.tolist()), material, rng)
         if textured is None:
-            textured = shaded_colors(world, base, rng)
+            # Unbaked albedo (W8): export-ready colors carry no lighting term.
+            textured = albedo_colors(world, base, rng)
         chunks_col.append(textured)
 
     if not chunks_pos:

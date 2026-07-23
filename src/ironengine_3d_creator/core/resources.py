@@ -1,9 +1,10 @@
 """Acceleration backend detection and resource caps.
 
-The generator pulls a numpy-like module from `get_xp()`. When a CUDA backend is
-chosen, we still surface results as plain numpy arrays at the boundary so the
-rest of the pipeline (PLY writer, point-cloud renderer, sim integration) does
-not need to care about the backend.
+Only two compute backends are real today: ``cuda_cupy`` (used by the
+sphere/ellipsoid samplers when CuPy + CUDA are importable) and ``cpu_numpy``
+(everything else). The generator surfaces results as plain numpy arrays at
+the boundary so the rest of the pipeline (PLY writer, point-cloud renderer,
+sim integration) does not need to care about the backend.
 """
 from __future__ import annotations
 
@@ -17,7 +18,11 @@ import psutil
 
 _log = logging.getLogger(__name__)
 
-BACKENDS = ("auto", "cuda_cupy", "cuda_torch", "taichi", "cpu_numpy")
+# Selectable backends. cuda_torch/taichi were removed: they were accepted and
+# badged as GPU but get_xp() returned numpy for them, i.e. they silently
+# no-op'ed. Detected-but-unused torch/taichi installs are still reported in
+# BackendReport.notes for honesty.
+BACKENDS = ("auto", "cuda_cupy", "cpu_numpy")
 
 
 @dataclass
@@ -62,8 +67,10 @@ def _torch_cuda_available() -> bool:
 def detect_backends(prefer_gpu: bool = True) -> BackendReport:
     """Detect available acceleration backends and pick a default.
 
-    Priority when prefer_gpu: cuda_cupy → cuda_torch → taichi → cpu_numpy.
-    Taichi is the explicit cross-vendor fallback when no CUDA is available.
+    Priority when prefer_gpu: cuda_cupy → cpu_numpy. Torch+CUDA and Taichi
+    installs are still detected (and reported via BackendReport/notes) but are
+    never chosen: no generation hot path uses them, so picking them would be
+    a no-op masquerading as GPU acceleration.
     """
     cupy_ok = _cupy_cuda_available()
     torch_ok = _torch_cuda_available()
@@ -71,18 +78,19 @@ def detect_backends(prefer_gpu: bool = True) -> BackendReport:
     nvidia_ok = _have_module("pynvml")
 
     notes: list[str] = []
+    if torch_ok:
+        notes.append("torch+CUDA detected but unused (no torch hot paths); not selectable")
+    if taichi_ok:
+        notes.append("taichi detected but unused (no taichi hot paths); not selectable")
+
     if not prefer_gpu:
         chosen = "cpu_numpy"
         notes.append("prefer_gpu=False → cpu_numpy")
     elif cupy_ok:
         chosen = "cuda_cupy"
-    elif torch_ok:
-        chosen = "cuda_torch"
-    elif taichi_ok:
-        chosen = "taichi"
     else:
         chosen = "cpu_numpy"
-        notes.append("no GPU backend available; using NumPy on CPU")
+        notes.append("no usable GPU backend available; using NumPy on CPU")
 
     return BackendReport(
         cuda_cupy=cupy_ok,
@@ -98,14 +106,14 @@ def resolve_backend(name: str, prefer_gpu: bool = True) -> str:
     if name == "auto":
         return detect_backends(prefer_gpu).chosen
     if name not in BACKENDS:
-        _log.warning("unknown backend %r; falling back to auto", name)
+        # Covers stale settings that still name the removed no-op backends
+        # (cuda_torch / taichi) as well as genuinely unknown names.
+        _log.warning("backend %r is not selectable (removed or unknown); falling back to auto", name)
         return detect_backends(prefer_gpu).chosen
     # If the user picked an unavailable backend, downgrade silently.
     rep = detect_backends(prefer_gpu)
     available = {
         "cuda_cupy": rep.cuda_cupy,
-        "cuda_torch": rep.cuda_torch,
-        "taichi": rep.taichi,
         "cpu_numpy": True,
     }
     if not available.get(name, False):
@@ -117,9 +125,9 @@ def resolve_backend(name: str, prefer_gpu: bool = True) -> str:
 def get_xp(backend: str) -> Any:
     """Return a numpy-compatible module for the chosen backend.
 
-    For taichi we currently use numpy at the boundary and rely on taichi
-    kernels inside specific hot paths (carving, sampling). The generator can
-    therefore treat all backends uniformly via this `xp` handle.
+    Only cuda_cupy returns a non-numpy module; cpu_numpy (and any fallback)
+    returns numpy, so the generator can treat all backends uniformly via this
+    `xp` handle.
     """
     if backend == "cuda_cupy":
         try:
@@ -127,9 +135,6 @@ def get_xp(backend: str) -> Any:
             return cp
         except Exception:
             return np
-    if backend == "cuda_torch":
-        # Surface numpy for ergonomics; specific ops can opt into torch tensors.
-        return np
     return np
 
 
@@ -151,7 +156,8 @@ def active_backend() -> str:
 
 
 def is_gpu(backend: str | None = None) -> bool:
-    return (backend or _active_backend) in ("cuda_cupy", "cuda_torch")
+    # Only cuda_cupy actually runs work on the GPU.
+    return (backend or _active_backend) == "cuda_cupy"
 
 
 def to_numpy(arr: Any) -> np.ndarray:

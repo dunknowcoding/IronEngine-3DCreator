@@ -147,12 +147,13 @@ class LLMConfigPanel(AnimatedPanel):
             "lmstudio": "http://localhost:1234/v1",
             "anthropic": "",
             "openai": "",
+            "minimax": "https://api.minimaxi.com/v1",
         }
         self.endpoint.setText(eps.get(name, defaults.get(name, "")))
         self.api_key.setText(secrets.get_api_key(name) or "")
 
         saved_model = models.get(name, "")
-        if name in ("anthropic", "openai"):
+        if name in ("anthropic", "openai", "minimax"):
             catalog = list(known_models.for_provider(name))
             if saved_model and saved_model not in catalog:
                 catalog.insert(0, saved_model)
@@ -178,7 +179,7 @@ class LLMConfigPanel(AnimatedPanel):
 
     def _refresh_models(self) -> None:
         name = self.provider.currentText()
-        if name in ("anthropic", "openai"):
+        if name in ("anthropic", "openai", "minimax"):
             catalog = list(known_models.for_provider(name))
             self._populate_model_dropdown(catalog, keep_current=True)
             self.model_hint.setText(f"{len(catalog)} curated cloud models")

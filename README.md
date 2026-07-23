@@ -9,7 +9,7 @@
   <img alt="Python" src="https://img.shields.io/pypi/pyversions/ironengine-3d-creator?logo=python&logoColor=white">
   <img alt="UI" src="https://img.shields.io/badge/UI-PySide6-41CD52?logo=qt&logoColor=white">
   <img alt="Renderer" src="https://img.shields.io/badge/rendering-OpenGL%20%2B%20Open3D-6E40C9">
-  <img alt="LLM" src="https://img.shields.io/badge/LLM-Ollama%20%7C%20OpenAI%20%7C%20Anthropic-111827">
+  <img alt="LLM" src="https://img.shields.io/badge/LLM-Ollama%20%7C%20OpenAI%20%7C%20Anthropic%20%7C%20MiniMax-111827">
   <img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-F59E0B">
 </p>
 
@@ -81,7 +81,7 @@ The screenshots above were captured from the local app flow in the `IronEngineWo
 - **Structured generation**: the LLM returns a compact `GenerationSpec` of primitives, transforms, labels, and surface features.
 - **Deterministic integrity repair**: grounding, attachment, spacing, and framework repair happen after parsing so common structural failures are fixed automatically.
 - **Real desktop UI**: PySide6-based editor with prompt controls, streaming token view, live viewport, mesh mode, and editing tools.
-- **Multiple model backends**: Ollama and LM Studio locally, plus Anthropic and OpenAI in the cloud.
+- **Multiple model backends**: Ollama and LM Studio locally, plus Anthropic, OpenAI, and MiniMax in the cloud.
 - **Renderer API included**: offscreen render helpers let you create RGBA previews without opening the full app.
 - **Package-ready layout**: Conda environment file, wheel manifest, packaged prompt rules, contributor guide, and changelog are included.
 
@@ -94,7 +94,7 @@ The screenshots above were captured from the local app flow in the `IronEngineWo
 | Geometry | Supports procedural primitives including `box`, `sphere`, `cylinder`, `capsule`, `cone`, `torus`, `ellipsoid`, `prism`, `helix`, and `plane` |
 | Surface detail | Applies features such as `scratch`, `curve_pattern`, `bump_field`, `dent`, `erosion`, `ridges`, `holes`, and `fur` |
 | Rendering | Shows points, mesh, or both with textured and plain color modes |
-| Export | Writes `PLY`, `PCD`, `GLB`, and `OBJ` |
+| Export | Writes `PLY`, `PCD`, `GLB` (PBR, per-part), and `OBJ`+`MTL`, plus an `iemodel/2` manifest with per-part materials and physics (mass, solid volume, colliders) |
 | Editing | Supports brush move, warp, paint, smooth, and undo/redo |
 | Performance | Uses NumPy by default and can accelerate with optional GPU backends |
 
@@ -215,6 +215,7 @@ ironengine-3d-creator
 
 - Choose a provider in the right-side **LLM configuration** panel.
 - For local usage, use `ollama` with a `qwen3.5` model.
+- For cloud usage, use `anthropic`, `openai`, or `minimax`. MiniMax is OpenAI-compatible (endpoint `https://api.minimaxi.com/v1`, default model `MiniMax-M3`); its key resolves from the `MINIMAX_API_KEY` environment variable or the Windows Credential Manager, and it is covered by the `openai` extra.
 - Turn on **Reasoning / thinking mode** when you want better deliberation and can afford slower generation.
 - Leave **Code mode** off unless you specifically want sandboxed Python generation instead of structured JSON specs.
 
@@ -252,8 +253,36 @@ Example prompts:
 ### 5. Edit and export
 
 - Use brush, warp, paint, or smooth from the editing panel.
-- Export to `PLY`, `PCD`, `GLB`, or `OBJ`.
-- Use **Send to SceneEditor** to hand off to downstream IronEngine tools when available.
+- Export to `PLY`, `PCD`, `GLB`, or `OBJ` (with a matching `MTL` material file). Spec-driven GLB export builds analytic per-primitive meshes with exact normals and UVs — full PBR with named per-part nodes, a baked `baseColorTexture`, `COLOR_0` vertex colors, and metallic/roughness factors. Spec-less clouds fall back to adaptive ball-pivot reconstruction with oriented normals (Poisson fallback) and keep vertex colors.
+- Exporting `GLB` or `PLY` also writes a sibling `.iemodel.json` manifest (`iemodel/2`) describing the model for downstream tools:
+  ```json
+  {
+    "schema": "iemodel/2",
+    "name": "chair",
+    "generator": "ironengine-3d-creator 0.2.0",
+    "units": "meters",
+    "up_axis": "Y",
+    "aabb_min": [0, 0, 0], "aabb_max": [1, 1.2, 1], "bbox_size": [1, 1.2, 1],
+    "material": {"name": "wood", "albedo": [0.55, 0.4, 0.32], "roughness": 0.65, "metallic": 0.0},
+    "materials": {
+      "wood": {"albedo": [0.55, 0.4, 0.32], "roughness": 0.65, "metallic": 0.0,
+               "density_kg_m3": 700, "friction": 0.6, "restitution": 0.25}
+    },
+    "parts": [
+      {"label": 0, "primitive": "box", "material": "wood",
+       "aabb_min": [0, 0, 0], "aabb_max": [1, 0.5, 1], "solid_volume_m3": 0.5}
+    ],
+    "physics": {"density_kg_m3": 700, "friction": 0.6, "restitution": 0.25,
+                "collider": "box", "dynamic": true,
+                "solid_volume_m3": 1.1, "mass_kg": 770.0},
+    "mesh": {"path": "chair.glb", "format": "glb", "vertices": 12345, "faces": 24680,
+             "has_uvs": true, "has_vertex_colors": true, "analytic": true},
+    "point_cloud": {"path": "chair.ply", "format": "ply", "points": 60000},
+    "spec": {}
+  }
+  ```
+  `physics.collider` is one of `box`, `convex`, or `parts` (chosen from the primitive kinds); `mass_kg` derives from the measured per-part solid volumes.
+- Use **Send to SceneEditor** to hand off to downstream IronEngine tools when available. A background worker writes a timestamped `creator_model_*.{ply,glb,iemodel.json}` triple plus a `handoff.json` pointer into the export target dir, then launches SceneEditor with `--import <manifest>` so the object arrives with real scale, per-part PBR materials, and physics (mass, friction, restitution, collider) instead of untextured gray points.
 
 ## Keyboard shortcuts
 

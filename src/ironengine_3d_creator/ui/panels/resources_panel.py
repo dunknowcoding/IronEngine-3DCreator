@@ -88,10 +88,14 @@ class ResourcesPanel(AnimatedPanel):
         rep = res.detect_backends(prefer_gpu=True)
         bits = []
         if rep.cuda_cupy: bits.append("CuPy")
-        if rep.cuda_torch: bits.append("Torch+CUDA")
-        if rep.taichi: bits.append("Taichi")
+        # Torch/Taichi installs are detected but not usable backends (no hot
+        # paths) — surface them as informational only, via BackendReport.notes.
+        unused = [n for n in rep.notes if "detected but unused" in n]
         if not bits: bits.append("CPU only")
-        self.detect_label.setText("Detected: " + ", ".join(bits) + f" — auto = {rep.chosen}")
+        text = "Detected: " + ", ".join(bits) + f" — auto = {rep.chosen}"
+        if unused:
+            text += " · " + "; ".join(unused)
+        self.detect_label.setText(text)
 
     def _refresh_usage(self) -> None:
         rss = res.process_rss_mb()

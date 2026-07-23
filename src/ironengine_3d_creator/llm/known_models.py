@@ -30,10 +30,19 @@ OPENAI_MODELS = (
     "o1-mini",
 )
 
+MINIMAX_MODELS = (
+    "MiniMax-M3",
+    "MiniMax-M2",
+    "MiniMax-Text-01",
+    "abab6.5s-chat",
+)
+
 
 def for_provider(name: str) -> tuple[str, ...]:
     if name == "anthropic":
         return ANTHROPIC_MODELS
     if name == "openai":
         return OPENAI_MODELS
+    if name == "minimax":
+        return MINIMAX_MODELS
     return ()

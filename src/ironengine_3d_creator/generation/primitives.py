@@ -6,9 +6,11 @@ the primitive's transform afterwards. Sampling is uniform on the surface
 (area-weighted where the primitive has multiple faces).
 
 When a CUDA backend is active (see `core.resources.active_backend`), the
-heavyweight unit-sphere and unit-ellipsoid samplers run on the GPU via CuPy.
-Smaller / non-bulk primitives stay on the CPU because the transfer cost would
-swallow the savings for typical point counts.
+heavyweight unit-sphere sampler runs on the GPU via CuPy. The ellipsoid
+sampler stays on the CPU because area-uniform rejection sampling (W12) is
+cheap and correctness matters more than throughput here. Smaller / non-bulk
+primitives stay on the CPU because the transfer cost would swallow the
+savings for typical point counts.
 """
 from __future__ import annotations
 
@@ -171,21 +173,33 @@ def sample_torus(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
 
 
 def sample_ellipsoid(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
-    rx, ry, rz = params.get("radii", [0.5, 0.5, 0.5])
-    cp = _try_cupy()
-    if cp is not None and n >= _gpu_threshold():
-        seed = int(rng.integers(0, 2**31 - 1))
-        gpu_rng = cp.random.default_rng(seed)
-        pts = gpu_rng.standard_normal((n, 3), dtype=cp.float32)
-        pts /= cp.linalg.norm(pts, axis=1, keepdims=True) + 1e-12
-        # Broadcast multiply: (N,3) * (3,) hits one elementwise kernel instead
-        # of three strided column updates.
-        pts *= cp.asarray([rx, ry, rz], dtype=cp.float32)
-        return cp.asnumpy(pts)
-    pts = rng.standard_normal((n, 3))
-    pts /= np.linalg.norm(pts, axis=1, keepdims=True) + 1e-12
-    pts *= np.asarray([rx, ry, rz], dtype=np.float32)
-    return pts.astype(np.float32)
+    """Area-uniform sampling on the ellipsoid surface (W12).
+
+    Mapping a uniform sphere direction u through D = diag(radii) induces a
+    surface density proportional to |D^-1 u|. Rejection-sampling u with
+    probability |D^-1 u| / max(|D^-1 u|) = |D^-1 u| * min(radii) cancels that
+    bias, giving uniform density per unit area even on elongated ellipsoids
+    (for spheres every candidate is accepted).
+    """
+    rx, ry, rz = (float(v) for v in params.get("radii", [0.5, 0.5, 0.5]))
+    radii = np.asarray([rx, ry, rz], dtype=np.float64)
+    inv = 1.0 / radii
+    accept_max = inv.max()  # max of |D^-1 u| over the unit sphere
+    out: list[np.ndarray] = []
+    needed = n
+    while needed > 0:
+        m = int(needed * 1.6) + 16
+        u = rng.standard_normal((m, 3))
+        u /= np.linalg.norm(u, axis=1, keepdims=True) + 1e-12
+        w = np.linalg.norm(u * inv, axis=1)
+        keep = rng.uniform(0.0, accept_max, m) <= w
+        pts = u[keep] * radii
+        if pts.shape[0]:
+            out.append(pts.astype(np.float32))
+            needed -= pts.shape[0]
+    if not out:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.concatenate(out, axis=0)[:n]
 
 
 def sample_prism(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:

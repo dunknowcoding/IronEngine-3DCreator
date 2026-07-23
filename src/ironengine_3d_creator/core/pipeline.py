@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterator, Optional
 
 import numpy as np
@@ -36,6 +36,7 @@ class PipelineRequest:
     details: str = ""
     seed: int = 0
     code_mode: bool = False     # advanced: LLM emits Python instead of JSON
+    ram_cap_mb: int = 0         # 0 → no cap; otherwise n_points is clamped to fit
 
 
 @dataclass
@@ -61,6 +62,30 @@ def build_user_prompt(req: PipelineRequest) -> str:
     return " ".join(pieces)
 
 
+def _enforce_ram_cap(req: PipelineRequest, warnings: list[str]) -> PipelineRequest:
+    """Clamp n_points so the estimated generation footprint fits the RAM cap.
+
+    The Resources panel slider used to be saved but never enforced; now the
+    cap reaches the pipeline via PipelineRequest.ram_cap_mb (0 = unlimited).
+    """
+    from .resources import estimate_generation_ram_mb
+
+    cap = int(req.ram_cap_mb or 0)
+    if cap <= 0 or req.n_points <= 0:
+        return req
+    est = estimate_generation_ram_mb(req.n_points)
+    if est <= cap:
+        return req
+    # Inverse of estimate_generation_ram_mb: points = mb * 2**20 / (24 * 4).
+    clamped = max(1000, int(cap * 1024 * 1024 / (24 * 4)))
+    warnings.append(
+        f"point budget clamped {req.n_points:,} → {clamped:,} to fit the "
+        f"{cap} MB RAM cap (estimated {est:,.0f} MB)"
+    )
+    _log.info("n_points clamped %d → %d by RAM cap %d MB", req.n_points, clamped, cap)
+    return replace(req, n_points=clamped)
+
+
 def run(
     req: PipelineRequest,
     provider: LLMProvider | None,
@@ -76,6 +101,7 @@ def run(
     the LLM streaming bail out promptly and close its socket."""
     warnings: list[str] = []
     raw = ""
+    req = _enforce_ram_cap(req, warnings)
 
     # ---- Step 1: build a spec ----------------------------------------------
     if not req.user_prompt.strip() or provider is None:

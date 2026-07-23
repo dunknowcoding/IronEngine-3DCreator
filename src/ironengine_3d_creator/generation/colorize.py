@@ -29,12 +29,31 @@ def base_color(shape: str, override: tuple[float, float, float] | None) -> np.nd
     return np.asarray(_SHAPE_DEFAULT.get(shape, (0.6, 0.6, 0.65)), dtype=np.float32)
 
 
+def albedo_colors(
+    positions: np.ndarray,
+    base: np.ndarray,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Unbaked albedo variation — per-point noise only, no lighting terms.
+
+    Exported assets must carry raw albedo (W8): downstream renderers apply
+    their own lighting, so any baked Lambert term would double-shade. The
+    interactive viewport shades with its own GL lighting, so unbaked colors
+    still look lit in preview.
+    """
+    if positions.shape[0] == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    noise = rng.uniform(0.94, 1.06, positions.shape[0])
+    return np.clip(base[None, :] * noise[:, None], 0.0, 1.0).astype(np.float32)
+
+
 def shaded_colors(
     positions: np.ndarray,
     base: np.ndarray,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Apply a gentle radial shading + per-point noise variation."""
+    """Preview-only faux shading. Do NOT export these colors (W8) — they bake
+    a fixed directional light into albedo and double-shade downstream."""
     if positions.shape[0] == 0:
         return np.empty((0, 3), dtype=np.float32)
     centroid = positions.mean(axis=0)

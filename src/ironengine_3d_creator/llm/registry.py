@@ -9,7 +9,7 @@ from .base import LLMProvider
 from .lmstudio import LMStudioProvider
 from .ollama import OllamaProvider
 
-PROVIDERS = ("ollama", "lmstudio", "anthropic", "openai")
+PROVIDERS = ("ollama", "lmstudio", "anthropic", "openai", "minimax")
 
 
 def make_provider(
@@ -34,8 +34,20 @@ def make_provider(
         return LMStudioProvider(model=model, endpoint=endpoint or "http://localhost:1234/v1", api_key=api_key)
     if name == "anthropic":
         from .cloud_anthropic import AnthropicProvider
-        return AnthropicProvider(model=model, endpoint=endpoint, api_key=api_key)
+        return AnthropicProvider(
+            model=model, endpoint=endpoint, api_key=api_key,
+            think_mode=think_mode, json_mode=json_mode,
+        )
     if name == "openai":
         from .cloud_openai import OpenAIProvider
-        return OpenAIProvider(model=model, endpoint=endpoint, api_key=api_key)
+        return OpenAIProvider(
+            model=model, endpoint=endpoint, api_key=api_key,
+            think_mode=think_mode, json_mode=json_mode,
+        )
+    if name == "minimax":
+        from .minimax import MiniMaxProvider
+        return MiniMaxProvider(
+            model=model, endpoint=endpoint, api_key=api_key,
+            think_mode=think_mode, json_mode=json_mode,
+        )
     raise KeyError(f"unknown LLM provider: {name!r} (known: {PROVIDERS})")
