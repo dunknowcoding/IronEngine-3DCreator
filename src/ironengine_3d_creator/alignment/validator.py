@@ -335,6 +335,12 @@ def normalize(spec: GenerationSpec) -> tuple[GenerationSpec, list[str]]:
         color=color,
         seed=seed,
     )
+    # Preserve the manifest extras side-channel (soft_body / fracture / cloth /
+    # fluid / flora / terrain blocks) — normalize must not silently strip the
+    # metadata downstream manifest assembly depends on.
+    extras = getattr(spec, "manifest_extras", None)
+    if extras:
+        clean_spec.manifest_extras = extras
     _apply_proportion_rules(clean_spec, warnings)
     _apply_truth_tables(clean_spec, warnings)
     return clean_spec, warnings

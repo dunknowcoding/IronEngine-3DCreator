@@ -51,11 +51,36 @@ _FAMILY_WEIGHTS: dict[str, float] = {
     "desktop_computer": 0.5,
     "spaceship": 0.5,
     "robot": 0.5,
+    # CR_Integrator families — heavy/rare objects get low draw weights.
+    "human": 0.5,
+    "building": 0.5,
+    "water_container": 0.6,
+    "vehicle": 0.5,
+    "flora_param": 0.7,
+    "boulder_field": 0.25,
+    "rock_strata_cliff": 0.2,
+    "cobblestone_patch": 0.2,
+    "cracked_mud": 0.2,
+    "mossy_stones": 0.2,
+    "pebble_riverbed": 0.2,
+    "stone_slab_pavement": 0.2,
 }
 
 # Keyword routing: lowercase substrings → family. Checked in order; the first
-# family with any hit wins, ties broken by earliest match position.
+# family with any hit wins, ties broken by earliest match position (dict
+# order breaks same-position ties, so "building" precedes "architecture" and
+# "vehicle" precedes "mechanical").
 FAMILY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "human": ("human", "woman", "man", "person", "people", "girl", "boy",
+              "lady", "gentleman", "female", "male", "ponytail", "ponytails",
+              "anatomy", "bride"),
+    "building": ("building", "house", "cottage", "villa", "mansion",
+                 "bungalow", "cabin", "apartment", "townhouse", "duplex",
+                 "floor plan", "rooms", "storey"),
+    "water_container": ("pond", "aquarium", "basin", "bucket", "birdbath",
+                        "water tank", "water"),
+    "vehicle": ("vehicle", "car", "sedan", "suv", "hatchback", "notchback",
+                "sports car", "automobile", "wheels"),
     "furniture": ("chair", "table", "stool", "bench", "desk", "sofa", "couch",
                   "shelf", "cabinet", "furniture", "seat", "throne"),
     "futurist_chair": ("futuristic chair", "futurist chair", "futuristic",
@@ -93,6 +118,16 @@ FAMILY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "vessel": ("vase", "pot", "jar", "jug", "cup", "mug", "bottle", "bowl",
                "urn", "pitcher", "kettle", "vessel", "container", "amphora",
                "chalice", "goblet"),
+    # CR_Integrator families with non-conflicting keywords (ties impossible).
+    "flora_param": ("oak", "maple", "pine", "palm", "grass", "meadow",
+                    "lavender", "prairie"),
+    "boulder_field": ("boulder", "boulders", "boulder field"),
+    "rock_strata_cliff": ("strata", "cliff", "rock strata"),
+    "cobblestone_patch": ("cobblestone", "cobbles", "cobble"),
+    "cracked_mud": ("cracked mud", "mud cracks", "cracked earth"),
+    "mossy_stones": ("mossy", "moss", "mossy stones"),
+    "pebble_riverbed": ("riverbed", "river bed"),
+    "stone_slab_pavement": ("pavement", "slab pavement", "flagstone"),
 }
 
 # Part-count targets per complexity level (before budget clamping).
@@ -301,7 +336,7 @@ class StyleEngine:
         builder(ctx)
         _fit_to_bbox(ctx.primitives, bbox)
 
-        return GenerationSpec(
+        spec = GenerationSpec(
             shape=family,
             n_points=int(n_points),
             bbox_size=(float(bbox[0]), float(bbox[1]), float(bbox[2])),
@@ -310,6 +345,11 @@ class StyleEngine:
             color=ctx.color,
             seed=int(self.seed or 0),
         )
+        if ctx.extras:
+            # Manifest extras side-channel (fluid / flora / terrain / proxy
+            # metadata from the cross-module family adapters).
+            spec.manifest_extras = dict(ctx.extras)
+        return spec
 
 
 def generate_style_spec(

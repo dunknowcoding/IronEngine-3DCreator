@@ -68,8 +68,9 @@ BODY_TYPES = ("rigid", "soft", "frangible", "articulated")
 _NONRIGID_BLOCKS = ("soft_body", "fracture", "articulation")
 
 # Additional optional blocks passed through verbatim (CR extensions, e.g. the
-# cloth world-dimension block consumed by the Sim side — B1-CR).
-_EXTRA_PASSTHROUGH_BLOCKS = ("cloth",)
+# cloth world-dimension block consumed by the Sim side — B1-CR, and the fluid
+# block emitted by generation.water water-container specs — CR_FloraWater).
+_EXTRA_PASSTHROUGH_BLOCKS = ("cloth", "fluid")
 
 # Primitives whose shape a box collider approximates well; everything organic
 # or curved gets a convex-hull hint instead.

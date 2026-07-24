@@ -38,6 +38,48 @@ def _is_cutter(prim) -> bool:
     return str((prim.params or {}).get("role", "")).lower() == "subtract"
 
 
+# Default blend strength for the per-part tint hook (params["color"]): 0 keeps
+# the spec base color, 1 replaces it entirely. 0.65 lets the override read
+# clearly while staying in harmony with the object's global palette.
+DEFAULT_TINT_STRENGTH = 0.65
+
+
+def part_base_color(base: np.ndarray, prim) -> np.ndarray:
+    """Per-part tint hook: an optional per-primitive color override blended
+    over the spec base color.
+
+    Sources (first hit wins):
+      1. ``params["color"]`` — RGB triple in [0, 1];
+      2. ``params["extras"]["color"]`` / ``params["extras"]["tint"]``.
+
+    ``params["color_strength"]`` (0..1, default 0.65) controls the blend:
+    ``out = base * (1 - s) + tint * s``. Backward compatible: no override
+    params → the spec base color is returned unchanged. Malformed values are
+    ignored (fall back to the spec base) rather than crashing generation.
+    """
+    params = getattr(prim, "params", None) or {}
+    tint = params.get("color")
+    if tint is None:
+        extras = params.get("extras")
+        if isinstance(extras, dict):
+            tint = extras.get("color", extras.get("tint"))
+    if tint is None:
+        return base
+    try:
+        t = np.asarray(tint, dtype=np.float32).reshape(-1)
+    except (TypeError, ValueError):
+        return base
+    if t.shape[0] < 3 or not np.isfinite(t[:3]).all():
+        return base
+    t = np.clip(t[:3], 0.0, 1.0)
+    try:
+        s = float(params.get("color_strength", DEFAULT_TINT_STRENGTH))
+    except (TypeError, ValueError):
+        s = DEFAULT_TINT_STRENGTH
+    s = float(np.clip(s, 0.0, 1.0))
+    return np.clip(base * (1.0 - s) + t * s, 0.0, 1.0).astype(np.float32)
+
+
 def generate(spec: GenerationSpec) -> GenerationResult:
     """Procedurally synthesize a point cloud from a validated spec."""
     rng = np.random.default_rng(spec.seed or None)
@@ -73,12 +115,14 @@ def generate(spec: GenerationSpec) -> GenerationResult:
         chunks_lbl.append(np.full(world.shape[0], i, dtype=np.int32))
 
         # Per-primitive material → either explicit "material" param or
-        # heuristic from shape/label.
+        # heuristic from shape/label. Per-part tint hook: params["color"]
+        # (or params["extras"]["color"/"tint"]) blended over the spec base.
         material = prim.params.get("material") or shape_default_material(spec.shape, prim.label)
-        textured = apply_texture(world, tuple(base.tolist()), material, rng)
+        pbase = part_base_color(base, prim)
+        textured = apply_texture(world, tuple(pbase.tolist()), material, rng)
         if textured is None:
             # Unbaked albedo (W8): export-ready colors carry no lighting term.
-            textured = albedo_colors(world, base, rng)
+            textured = albedo_colors(world, pbase, rng)
         # Hard-surface realism: subtle seeded asperity so stone/wood stops
         # looking CG-smooth. Peak displacement ≈ 0.15 % of the part's world
         # extent, clamped to [0.2 mm, 1.5 mm]; opt out with

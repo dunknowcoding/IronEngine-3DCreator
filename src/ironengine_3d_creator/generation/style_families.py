@@ -71,6 +71,11 @@ class FamilyContext:
     primitives: list[Primitive] = field(default_factory=list)
     features: list[Feature] = field(default_factory=list)
     color: tuple[float, float, float] = (0.6, 0.6, 0.6)
+    # Manifest extras side-channel (iemodel/3): adapters building through
+    # other modules (water/flora/terrain/human/building/vehicle) stash their
+    # resolved metadata blocks here; StyleEngine.generate attaches them to
+    # the produced spec as `manifest_extras`.
+    extras: dict = field(default_factory=dict)
 
     # -- kind availability -------------------------------------------------
     @property
@@ -1657,4 +1662,382 @@ FAMILY_BUILDERS.update({
     "flower": build_flower,
     "leaf": build_leaf,
     "terrain": build_terrain,
+})
+
+
+# ======================================================================
+# CR_Integrator extension — cross-module family adapters
+#
+# The landed feature modules (human_anatomy / building_arch / flora_params /
+# terrain_styles / water / vehicle_design) expose one-call builders with
+# their own result types. The adapters below wrap them into the
+# FamilyContext grammar so the style engine can route prompts to them:
+#
+#   human           -> human_anatomy.build_human    (AABB-ellipsoid proxy)
+#   building        -> building_arch.build_building (decor-trimmed to budget)
+#   flora_param     -> flora_params flora builders  (budget-trimmed)
+#   water_container -> water.water_container_spec   (fluid extras preserved)
+#   boulder_field / rock_strata_cliff / cobblestone_patch / cracked_mud /
+#   mossy_stones / pebble_riverbed / stone_slab_pavement
+#                   -> terrain_styles builders      (one family per sub-style)
+#   vehicle         -> vehicle_design.build_vehicle (AABB-ellipsoid proxy)
+#
+# Every adapter honors ctx.room() (the engine's complexity budget): parts
+# are emitted in priority order and trimmed so the part-count invariant the
+# style-engine tests enforce keeps holding. Human/vehicle are mesh-native
+# builders; their style-engine proxies fit one ellipsoid per major part
+# AABB (labels + per-part albedo via the compositor's params["color"] tint
+# hook). Call the modules' own builders directly for full-fidelity meshes.
+# ======================================================================
+
+
+def _seed_from(ctx: FamilyContext) -> int:
+    """Derive a deterministic child seed from the context RNG."""
+    return int(ctx.rng.integers(0, 2**31 - 1))
+
+
+def _trim(prims: list[Primitive], room: int, rank) -> list[Primitive]:
+    """Keep at most `room` primitives, chosen by `rank(prim, index)` (low
+    wins), preserving original emission order among the survivors."""
+    room = max(int(room), 0)
+    if len(prims) <= room:
+        return list(prims)
+    order = sorted(range(len(prims)), key=lambda i: rank(prims[i], i))
+    return [prims[i] for i in sorted(order[:room])]
+
+
+def _fit_aabb_ellipsoid(ctx: FamilyContext, name: str, lo, hi, *,
+                        material: str, color=None) -> None:
+    """One ellipsoid primitive fitted to a world-space AABB."""
+    lo = np.asarray(lo, dtype=np.float64)
+    hi = np.asarray(hi, dtype=np.float64)
+    size = np.maximum(hi - lo, 2e-3)
+    centre = (lo + hi) / 2.0
+    params: dict = {"radii": (size / 2.0).tolist()}
+    if color is not None:
+        params["color"] = [float(np.clip(c, 0.0, 1.0)) for c in color]
+    ctx.add("ellipsoid", tuple(float(c) for c in centre), params, name,
+            material=material)
+
+
+# ----------------------------------------------------------------------
+# human — build_human proxy (major bones + garments + hair shell)
+# ----------------------------------------------------------------------
+
+_HUMAN_BONE_PRIORITY = (
+    "head", "chest", "pelvis", "spine", "neck",
+    "upper_leg_l", "upper_leg_r", "lower_leg_l", "lower_leg_r",
+    "foot_l", "foot_r",
+    "upper_arm_l", "upper_arm_r", "lower_arm_l", "lower_arm_r",
+    "hand_l", "hand_r", "clavicle_l", "clavicle_r",
+)
+
+_HUMAN_SKIP_TOKENS = (
+    "finger", "toe", "nail", "iris", "pupil", "teeth", "nostril", "mouth",
+    "eye", "ear", "nose", "jaw", "brow", "cheek", "lip", "tongue",
+)
+
+
+def build_human_family(ctx: FamilyContext) -> None:
+    """Style-engine proxy for `human_anatomy.build_human`.
+
+    One ellipsoid per major part AABB (19 Sim bones first, then garments,
+    then a merged hair shell), each carrying the part's albedo through the
+    compositor's per-part tint hook. Full-fidelity loft meshes remain
+    available via `build_human()` directly.
+    """
+    from .hair import HAIRSTYLES
+    from .human_anatomy import build_human
+
+    seed = _seed_from(ctx)
+    human = build_human(
+        seed=seed,
+        gender=float(ctx.rng.uniform(0.0, 1.0)),
+        body_type=str(ctx.rng.choice(["slim", "average", "athletic", "heavy"])),
+        hair_style=str(ctx.rng.choice(HAIRSTYLES)),
+        detail="low",
+    )
+    aabbs = human.build().aabbs()
+    albedos = human.part_albedos()
+
+    # Merge hair sub-parts (scalp, hairline, strands, ties) into one shell.
+    hair_lo = hair_hi = None
+    for name in [n for n in aabbs if n.startswith("hair")]:
+        lo, hi = aabbs.pop(name)
+        hair_lo = lo if hair_lo is None else np.minimum(hair_lo, lo)
+        hair_hi = hi if hair_hi is None else np.maximum(hair_hi, hi)
+    hair_albedo = albedos.get("hair_scalp")
+
+    ordered = [n for n in _HUMAN_BONE_PRIORITY if n in aabbs]
+    ordered += sorted(
+        n for n in aabbs
+        if n not in _HUMAN_BONE_PRIORITY
+        and not any(tok in n for tok in _HUMAN_SKIP_TOKENS)
+    )
+    reserve = 1 if hair_lo is not None else 0
+    for name in ordered[: max(0, ctx.room() - reserve)]:
+        lo, hi = aabbs[name]
+        _fit_aabb_ellipsoid(ctx, name, lo, hi, material="organic",
+                            color=albedos.get(name))
+    if hair_lo is not None and ctx.room() > 0:
+        _fit_aabb_ellipsoid(ctx, "hair", hair_lo, hair_hi, material="organic",
+                            color=hair_albedo)
+    ctx.shape = "human"
+    ctx.extras["human"] = {
+        "appearance": human.appearance,
+        "proxy": "aabb_ellipsoid",
+        "full_fidelity": "generation.human_anatomy.build_human",
+    }
+
+
+# ----------------------------------------------------------------------
+# building — build_building proxy (structural first, decor trimmed)
+# ----------------------------------------------------------------------
+
+
+def _building_rank(prim: Primitive, i: int) -> tuple[int, int]:
+    label = (prim.label or "").lower()
+    if str((prim.params or {}).get("role", "")).lower() == "subtract":
+        return (0, i)
+    if any(k in label for k in ("slab", "roof")):
+        return (1, i)
+    if "door" in label:
+        return (2, i)
+    if any(k in label for k in ("wall", "pier", "partition", "corridor")):
+        return (3, i)
+    if any(k in label for k in ("lintel", "sill", "bay", "stair")):
+        return (4, i)
+    if any(k in label for k in ("column", "plinth", "cornice", "balcon")):
+        return (5, i)
+    return (6, i)   # quoins, downspouts, straps, decor
+
+
+def _building_massing(ctx: FamilyContext) -> None:
+    """Compact massing model for tiny complexity budgets (3-5 parts):
+    foundation slab, hollow wall shell, roof slab, and — when the budget
+    allows — a door opening (subtract cutter) with an ajar door leaf."""
+    w = ctx.uniform(6.0, 10.0)
+    d = ctx.uniform(5.0, 8.0)
+    h = ctx.uniform(3.0, 4.5)
+    ctx.add("box", (0, 0.15, 0), {"size": [w + 0.4, 0.3, d + 0.4]},
+            "slab_f0", material="stone")
+    ctx.add("box", (0, 0.3 + h / 2, 0), {"size": [w, h, d]},
+            "wall_shell", material="stone")
+    ctx.add("box", (0, 0.3 + h + 0.125, 0), {"size": [w + 0.3, 0.25, d + 0.3]},
+            "roof_slab", material="ceramic")
+    if ctx.room() >= 2:
+        dh = min(2.1, h - 0.3)
+        ctx.add("box", (0, 0.3 + dh / 2, d / 2 - 0.15),
+                {"size": [0.9, dh, 0.5], "role": "subtract",
+                 "target": "wall_shell"}, "door_opening")
+        ctx.add("panel", (0.25, 0.3 + dh / 2, d / 2 + 0.03),
+                {"size": [0.9, dh], "thickness": 0.04}, "door",
+                ry=float(ctx.uniform(-0.5, 0.5)), material="wood")
+
+
+def build_building_family(ctx: FamilyContext) -> None:
+    """Style-engine proxy for `building_arch.build_building`.
+
+    Uses the full plan→validate→compile pipeline and trims decorative parts
+    (quoins / downspouts / cornices / columns) to the complexity budget;
+    wall shells, slabs, roofs, doors and their subtract cutters are kept
+    first. With a tiny budget a compact massing model is emitted instead.
+    Hinge articulation lives on the analytic door parts (not the spec), so
+    it is intentionally not re-attached here.
+    """
+    from . import building_arch as _ba
+
+    room = ctx.room()
+    if room < 12:
+        _building_massing(ctx)
+        ctx.shape = "building"
+        return
+    seed = _seed_from(ctx)
+    style = str(ctx.rng.choice(["neoclassical", "modern", "baroque"]))
+    floors = 1 if room < 36 else int(ctx.rng.integers(1, 3))
+    res = _ba.build_building({
+        "seed": seed, "floors": floors, "style": style,
+        "interiors": True, "furniture": False,
+        "balcony": bool(ctx.maybe(0.5)),
+    })
+    spec = res["spec"]
+    ctx.primitives.extend(_trim(spec.primitives, room, _building_rank))
+    ctx.features.extend(spec.features)
+    if spec.color:
+        ctx.color = tuple(spec.color)
+    ctx.extras["building"] = {
+        "style": style, "floors": floors,
+        "validation": res["validation"],
+        "full_fidelity": "generation.building_arch.build_building",
+    }
+    ctx.shape = "building"
+
+
+# ----------------------------------------------------------------------
+# flora_param — flora_params builders (budget-trimmed)
+# ----------------------------------------------------------------------
+
+
+def build_flora_param_family(ctx: FamilyContext) -> None:
+    """Style-engine proxy for `flora_params.flora_spec`.
+
+    A random species (or a grass patch for tiny budgets) is grown into the
+    context and trimmed to the complexity budget — trunk/stem/ground parts
+    are emitted first by the flora grammars, so keep-first trimming degrades
+    gracefully. The resolved `flora` manifest block is preserved.
+    """
+    from .flora_params import FloraParams, SPECIES, flora_spec
+
+    room = ctx.room()
+    seed = _seed_from(ctx)
+    if room < 12:
+        style = str(ctx.rng.choice(["meadow", "lawn"]))
+    else:
+        style = str(ctx.rng.choice(sorted(SPECIES)))
+    p = FloraParams(style=style, density=float(ctx.uniform(0.3, 0.8)),
+                    season=str(ctx.rng.choice(["spring", "summer", "autumn"])),
+                    seed=seed)
+    spec = flora_spec(p)
+    ctx.primitives.extend(_trim(spec.primitives, room, lambda _p, i: (0, i)))
+    ctx.features.extend(spec.features)
+    if spec.color:
+        ctx.color = tuple(spec.color)
+    ctx.extras.update(getattr(spec, "manifest_extras", None) or {})
+    ctx.shape = f"flora_{p.kind}"
+
+
+# ----------------------------------------------------------------------
+# water_container — water builders (fluid extras preserved)
+# ----------------------------------------------------------------------
+
+# Rough part counts per container kind (floor+wall+rim+water+meniscus …).
+_WATER_PART_COUNT = {"basin": 5, "bucket": 7, "aquarium": 7, "vessel": 8,
+                     "pond": 11}
+
+
+def _water_rank(prim: Primitive, i: int) -> tuple[int, int]:
+    label = (prim.label or "").lower()
+    if label == "water":
+        return (0, i)          # the point of the family — never trimmed
+    if any(k in label for k in ("floor", "wall", "belly", "tank")):
+        return (1, i)
+    if "meniscus" in label:
+        return (2, i)
+    return (3, i)              # rims, handles, decor
+
+
+def build_water_container_family(ctx: FamilyContext) -> None:
+    """Style-engine proxy for `water.water_container_spec`.
+
+    Container + water body + meniscus, with the ``fluid`` extras block
+    preserved on ctx.extras (it reaches the iemodel/3 manifest through the
+    passthrough). Kind is chosen to fit the complexity budget; optional
+    parts (rim, handle, meniscus) are trimmed first."""
+    from . import water as _water
+
+    room = ctx.room()
+    seed = _seed_from(ctx)
+    fits = [k for k in _water.WATER_CONTAINERS
+            if _WATER_PART_COUNT.get(k, 8) <= max(room, 3)]
+    kind = str(ctx.rng.choice(fits or ["basin"]))
+    spec = _water.water_container_spec(
+        kind, fill_level=float(ctx.uniform(0.4, 0.9)), seed=seed)
+    ctx.primitives.extend(_trim(spec.primitives, room, _water_rank))
+    ctx.features.extend(spec.features)
+    if spec.color:
+        ctx.color = tuple(spec.color)
+    ctx.extras.update(getattr(spec, "manifest_extras", None) or {})
+    ctx.shape = f"water_{kind}"
+
+
+# ----------------------------------------------------------------------
+# terrain sub-styles — one family per terrain_styles style
+# ----------------------------------------------------------------------
+
+
+def _make_terrain_family(style: str):
+    """Style-engine proxy for one `terrain_styles` sub-style."""
+    def build(ctx: FamilyContext) -> None:
+        from .terrain_styles import TERRAIN_STYLE_BUILDERS, TerrainParams
+
+        seed = _seed_from(ctx)
+        p = TerrainParams(style=style, density=float(ctx.uniform(0.3, 0.8)),
+                          seed=seed)
+        TERRAIN_STYLE_BUILDERS[style](ctx, p)
+        # Budget trim: the ground slab is emitted first, scatter parts later.
+        del ctx.primitives[max(int(ctx.target_parts), 3):]
+        ctx.extras["terrain"] = {**p.to_dict(),
+                                 "proxy": "terrain_styles.terrain_spec"}
+        ctx.shape = f"terrain_{style}"
+    build.__name__ = f"build_terrain_{style}"
+    build.__doc__ = f"Style-engine proxy for the {style!r} terrain sub-style."
+    return build
+
+
+build_boulder_field_family = _make_terrain_family("boulder_field")
+build_rock_strata_cliff_family = _make_terrain_family("rock_strata_cliff")
+build_cobblestone_patch_family = _make_terrain_family("cobblestone_patch")
+build_cracked_mud_family = _make_terrain_family("cracked_mud")
+build_mossy_stones_family = _make_terrain_family("mossy_stones")
+build_pebble_riverbed_family = _make_terrain_family("pebble_riverbed")
+build_stone_slab_pavement_family = _make_terrain_family("stone_slab_pavement")
+
+
+# ----------------------------------------------------------------------
+# vehicle — build_vehicle proxy (top-volume parts as AABB ellipsoids)
+# ----------------------------------------------------------------------
+
+
+def build_vehicle_family(ctx: FamilyContext) -> None:
+    """Style-engine proxy for `vehicle_design.build_vehicle` (defensive
+    registration — CR_Vehicle owns the module). One ellipsoid per major
+    part AABB, largest solid volume first, trimmed to the complexity
+    budget; the body takes the paint color. Full-fidelity meshes and the
+    hinge articulation remain available via `build_vehicle()` directly.
+    """
+    from .vehicle_design import VEHICLE_CLASSES, build_vehicle
+
+    seed = _seed_from(ctx)
+    cls = str(ctx.rng.choice(sorted(VEHICLE_CLASSES)))
+    vs = build_vehicle({"seed": seed, "class": cls,
+                        "lod": "low", "interior_detail": "low"})
+
+    groups: dict[str, dict] = {}
+    for part in vs.parts:
+        g = groups.setdefault(part.name, {
+            "lo": np.full(3, np.inf), "hi": np.full(3, -np.inf),
+            "vol": 0.0, "material": part.material or "metal"})
+        g["lo"] = np.minimum(g["lo"], part.aabb_min)
+        g["hi"] = np.maximum(g["hi"], part.aabb_max)
+        g["vol"] += float(part.solid_volume_m3)
+    ordered = sorted(groups.items(), key=lambda kv: -kv[1]["vol"])
+    for name, g in ordered[: ctx.room()]:
+        _fit_aabb_ellipsoid(ctx, name, g["lo"], g["hi"],
+                            material=str(g["material"]))
+    ctx.shape = "vehicle"
+    ctx.extras["vehicle"] = {
+        "class": cls,
+        "proxy": "aabb_ellipsoid",
+        "full_fidelity": "generation.vehicle_design.build_vehicle",
+    }
+
+
+# ----------------------------------------------------------------------
+# registry (CR_Integrator additions; appended so earlier bindings stay
+# valid — FAMILY_KEYWORDS / _FAMILY_WEIGHTS live in style_engine.py)
+# ----------------------------------------------------------------------
+
+FAMILY_BUILDERS.update({
+    "human": build_human_family,
+    "building": build_building_family,
+    "flora_param": build_flora_param_family,
+    "water_container": build_water_container_family,
+    "boulder_field": build_boulder_field_family,
+    "rock_strata_cliff": build_rock_strata_cliff_family,
+    "cobblestone_patch": build_cobblestone_patch_family,
+    "cracked_mud": build_cracked_mud_family,
+    "mossy_stones": build_mossy_stones_family,
+    "pebble_riverbed": build_pebble_riverbed_family,
+    "stone_slab_pavement": build_stone_slab_pavement_family,
+    "vehicle": build_vehicle_family,
 })

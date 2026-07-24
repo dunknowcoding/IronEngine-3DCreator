@@ -63,6 +63,90 @@ def signed_volume(vertices: np.ndarray, faces: np.ndarray) -> float:
     return float(np.einsum("ij,ij->i", v0, np.cross(v1, v2)).sum() / 6.0)
 
 
+# ---------------------------------------------------------------------------
+# degenerate-face cleanup (CR_Integrator)
+# ---------------------------------------------------------------------------
+
+
+def weld_mesh(
+    vertices: np.ndarray,
+    normals: np.ndarray | None,
+    uvs: np.ndarray | None,
+    faces: np.ndarray,
+    *,
+    rel_tol: float = 1e-9,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray]:
+    """Dedupe identical corners and drop degenerate (zero-area) faces.
+
+    UV-sphere poles, cone apices and strongly bent panels emit coincident
+    vertices whose connecting triangles have exactly zero area. Those faces
+    carry no geometry but poison QA (multiview's ``degenerate_faces``
+    theme) and downstream exporters.
+
+    Two conservative passes:
+      1. weld vertices that agree on position AND normal AND uv (rounded to
+         ``rel_tol`` × the part extent) — only true duplicates merge, so
+         hard edges (box corners with split normals) are preserved;
+      2. drop faces whose geometric doubled area is ≤ tol², regardless of
+         index identity — pole/apex fans collapse even when their vertices
+         stay attribute-split.
+
+    Faces keep their winding; dropping never reorders. Attributes follow
+    the first occurrence of each welded vertex.
+    """
+    v = np.asarray(vertices, dtype=np.float64)
+    f = np.asarray(faces, dtype=np.int64)
+    if v.shape[0] == 0 or f.shape[0] == 0:
+        return vertices, normals, uvs, faces
+    extent = float(np.max(v.max(axis=0) - v.min(axis=0)))
+    tol = max(1e-12, extent * rel_tol)
+    keys = [np.round(v / tol)]
+    if normals is not None:
+        keys.append(np.round(np.asarray(normals, dtype=np.float64) / 1e-6))
+    if uvs is not None:
+        keys.append(np.round(np.asarray(uvs, dtype=np.float64) / 1e-6))
+    keys = np.concatenate(keys, axis=1)
+    _, first, inverse = np.unique(keys, axis=0, return_index=True,
+                                  return_inverse=True)
+    if len(first) == v.shape[0]:
+        v_new, n_new, uv_new = vertices, normals, uvs
+        f_new = f
+    else:
+        v_new = v[first].astype(vertices.dtype, copy=False)
+        n_new = (np.asarray(normals)[first] if normals is not None else None)
+        uv_new = (np.asarray(uvs)[first] if uvs is not None else None)
+        f_new = inverse[f]
+    keep = (
+        (f_new[:, 0] != f_new[:, 1])
+        & (f_new[:, 1] != f_new[:, 2])
+        & (f_new[:, 2] != f_new[:, 0])
+    )
+    f_new = f_new[keep]
+    if f_new.shape[0]:
+        vv = np.asarray(v_new, dtype=np.float64)
+        e1 = vv[f_new[:, 1]] - vv[f_new[:, 0]]
+        e2 = vv[f_new[:, 2]] - vv[f_new[:, 0]]
+        area2 = np.linalg.norm(np.cross(e1, e2), axis=1)
+        f_new = f_new[area2 > tol * tol]
+    return (v_new, n_new, uv_new,
+            f_new.astype(faces.dtype if hasattr(faces, "dtype") else np.int64,
+                         copy=False))
+
+
+def count_degenerate_faces(vertices: np.ndarray, faces: np.ndarray,
+                           *, rel_tol: float = 1e-9) -> int:
+    """Number of (near-)zero-area faces — the metric weld_mesh drives to 0."""
+    v = np.asarray(vertices, dtype=np.float64)
+    f = np.asarray(faces, dtype=np.int64)
+    if v.shape[0] == 0 or f.shape[0] == 0:
+        return 0
+    extent = float(np.max(v.max(axis=0) - v.min(axis=0)))
+    tol = max(1e-12, extent * rel_tol)
+    e1 = v[f[:, 1]] - v[f[:, 0]]
+    e2 = v[f[:, 2]] - v[f[:, 0]]
+    return int((np.linalg.norm(np.cross(e1, e2), axis=1) <= tol * tol).sum())
+
+
 def _grid_mesh(
     pos: np.ndarray,
     nrm: np.ndarray,
@@ -1389,6 +1473,9 @@ def build_part_mesh(kind: str, params: dict, transform, label: str, material: st
     v, n, uv, f = builder(params)
     T = np.asarray(transform, dtype=np.float64)
     vw, nw = apply_transform(v, n, T)
+    # Weld coincident vertices (UV poles, apices, bent-panel seams) and drop
+    # the zero-area faces they spawn — keeps exported meshes QA-clean.
+    vw, nw, uv, f = weld_mesh(vw, nw, uv, f)
     det = abs(float(np.linalg.det(T[:3, :3])))
     volume = primitive_solid_volume(kind, params) * (det if det > 1e-12 else 1.0)
     return AnalyticPart(
@@ -1456,6 +1543,7 @@ def build_spec_meshes_with_report(spec) -> tuple[list[AnalyticPart], list[str]]:
         if carved is not None and carved_ci is not None:
             v, n, uv, f, vol = carved
             vw, nw = apply_transform(v, n, T)
+            vw, nw, uv, f = weld_mesh(vw, nw, uv, f)
             det = abs(float(np.linalg.det(np.asarray(T, dtype=np.float64)[:3, :3])))
             parts.append(
                 AnalyticPart(

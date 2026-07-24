@@ -269,8 +269,8 @@ def test_pipeline_auto_style_leaves_llm_spec_unmutated():
 # ----------------------------------------------------------------------
 
 def test_diversity_report_shows_real_variance():
-    stats = diversity_report(n=20, seed0=10_000, n_points=12_000)
-    assert len(stats) == 20
+    stats = diversity_report(n=len(STYLE_FAMILIES), seed0=10_000, n_points=12_000)
+    assert len(stats) == len(STYLE_FAMILIES)
     # Every object is validator-clean.
     assert not [s for s in stats if s["validator_warnings"]]
     # Non-trivial variance: many kinds, several distinct part counts,
