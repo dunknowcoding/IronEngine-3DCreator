@@ -1,4 +1,17 @@
-﻿# Changelog
+# Changelog
+
+## 0.3.0
+
+Complex geometry, style engine v2, texture generators, reference validation, provider fallback, soft authoring, and a showcase README.
+
+- **Complex geometry**: 15 primitives (box, cylinder, sphere, cone, capsule, ellipsoid, torus, tube, arch, wedge, prism, frustum, slab, lathe, pipe) with boolean subtraction, lofting between cross-section profiles, and persistent part graphs that keep parts addressable through composition (`generation/primitives.py`, `generation/complex_builder.py`, `generation/subtraction` and part-graph support in the builder).
+- **Style engine v2**: 14 style families with quality grammars — per-family structural rules, proportion checks, and panel-native parameters that drive the seeded offline generator (`generation/style_families.py`, `generation/quality_v2` checks, exquisite family presets).
+- **Texture generators**: procedural albedo / roughness / normal-style map generation baked into PBR GLB exports (`generation/texture_maps.py`).
+- **Reference validator**: scores generated specs against a per-object reference corpus (proportions, part presence, per-part errors); corpus-integrity tests skip gracefully when the external corpus directory is absent (`alignment/reference` scoring, `IRONENGINE_REFERENCE_ROOT` override).
+- **Provider fallback chain**: ordered MiniMax → DeepSeek fallback with failure classification, `FallbackEvent` logging, spec-source provenance, a reorderable chain UI with key/reachability probing, and an opt-in real-API proof (`llm/chain.py`, `llm/registry.py`).
+- **iemodel/3 soft authoring**: export manifest bumped to `iemodel/3` with soft-authoring fields — authored parts, intents, and editing hints carried through the pipeline and into exports (`generation/soft_author.py`, `core/manifest.py`).
+- **Showcase README**: gallery-driven README with generated-model renders from `docs/showcase/`.
+- CI: added a `ci` workflow running `python -m pytest -q` on Ubuntu / Windows / macOS × Python 3.11 / 3.12.
 
 ## 2026-07-23 (provider fallback chain)
 

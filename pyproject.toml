@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ironengine-3d-creator"
-version = "0.2.0"
+version = "0.3.0"
 description = "Desktop app for turning natural-language prompts into structurally valid 3D point clouds and preview meshes."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,7 +47,7 @@ gpu_taichi = ["taichi>=1.7"]
 all = [
     "ironengine-3d-creator[sim,anthropic,openai,nvidia,gpu_cupy,gpu_torch,gpu_taichi]",
 ]
-dev = ["build>=1.2", "ruff>=0.6", "twine>=5.1"]
+dev = ["build>=1.2", "pytest>=8.0", "ruff>=0.6", "twine>=5.1"]
 
 [project.scripts]
 ironengine-3d-creator = "ironengine_3d_creator.app:main"
