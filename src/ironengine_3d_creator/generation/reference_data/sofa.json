@@ -1,0 +1,91 @@
+{
+  "object": "sofa",
+  "canonical_view": "front",
+  "proportion_axis": "height",
+  "license": "CC0-1.0 (hand-authored annotations by IronEngine team)",
+  "parts": [
+    {
+      "name": "seat",
+      "aliases": [
+        "seat_cushion",
+        "seat_cushions",
+        "cushion"
+      ],
+      "rel_bbox": [
+        0.12,
+        0.28,
+        0.76,
+        0.18
+      ],
+      "typical_proportion": 0.18,
+      "proportion_of": "height",
+      "notes": "seat cushions, 2-3 across"
+    },
+    {
+      "name": "back",
+      "aliases": [
+        "backrest",
+        "back_cushions"
+      ],
+      "rel_bbox": [
+        0.1,
+        0.45,
+        0.8,
+        0.4
+      ],
+      "typical_proportion": 0.4,
+      "proportion_of": "height",
+      "notes": "back cushions rising behind seat"
+    },
+    {
+      "name": "arm",
+      "aliases": [
+        "arms",
+        "armrest",
+        "arm_left",
+        "arm_right"
+      ],
+      "rel_bbox": [
+        0.0,
+        0.2,
+        0.12,
+        0.55
+      ],
+      "typical_proportion": 0.55,
+      "proportion_of": "height",
+      "notes": "rolled/square arms both ends"
+    },
+    {
+      "name": "base",
+      "aliases": [
+        "plinth",
+        "frame"
+      ],
+      "rel_bbox": [
+        0.05,
+        0.05,
+        0.9,
+        0.25
+      ],
+      "typical_proportion": 0.25,
+      "proportion_of": "height",
+      "notes": "upholstered base/plinth"
+    },
+    {
+      "name": "leg",
+      "aliases": [
+        "legs",
+        "feet"
+      ],
+      "rel_bbox": [
+        0.05,
+        0.0,
+        0.9,
+        0.07
+      ],
+      "typical_proportion": 0.07,
+      "proportion_of": "height",
+      "notes": "short legs or bun feet"
+    }
+  ]
+}

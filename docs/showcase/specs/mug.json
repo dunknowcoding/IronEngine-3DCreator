@@ -1,0 +1,285 @@
+{
+  "spec": {
+    "shape": "vase",
+    "n_points": 30000,
+    "bbox_size": [
+      0.2,
+      0.15,
+      0.15
+    ],
+    "primitives": [
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.05999999865889549
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.052,
+          "height": 0.12,
+          "caps": true,
+          "material": "porcelain"
+        },
+        "label": "mug_body"
+      },
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.11
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.042,
+          "height": 0.2,
+          "caps": true,
+          "role": "subtract",
+          "target": "mug_body"
+        },
+        "label": "hollow"
+      },
+      {
+        "kind": "tube",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.009,
+          "caps": true,
+          "path": [
+            [
+              0.048,
+              0.1,
+              0.0
+            ],
+            [
+              0.06254197042987342,
+              0.0971074222354289,
+              0.0
+            ],
+            [
+              0.07487005768508881,
+              0.08887005768508881,
+              0.0
+            ],
+            [
+              0.0831074222354289,
+              0.07654197042987342,
+              0.0
+            ],
+            [
+              0.086,
+              0.062,
+              0.0
+            ],
+            [
+              0.0831074222354289,
+              0.04745802957012659,
+              0.0
+            ],
+            [
+              0.07487005768508881,
+              0.03512994231491119,
+              0.0
+            ],
+            [
+              0.06254197042987342,
+              0.0268925777645711,
+              0.0
+            ],
+            [
+              0.04800000000000001,
+              0.024,
+              0.0
+            ]
+          ],
+          "material": "porcelain"
+        },
+        "label": "handle"
+      },
+      {
+        "kind": "torus",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.121
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "major_radius": 0.049,
+          "minor_radius": 0.005,
+          "material": "porcelain"
+        },
+        "label": "rim"
+      },
+      {
+        "kind": "ellipsoid",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.12
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radii": [
+            0.044,
+            0.004,
+            0.044
+          ],
+          "material": "organic"
+        },
+        "label": "coffee"
+      },
+      {
+        "kind": "torus",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.006
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "major_radius": 0.04,
+          "minor_radius": 0.005,
+          "material": "porcelain"
+        },
+        "label": "foot"
+      }
+    ],
+    "features": [],
+    "color": null,
+    "seed": 11
+  },
+  "warnings": [
+    "integrity: stacked body on the floor",
+    "integrity: part 'foot' is 100% inside 'mug_body' \u2014 possible accidental interpenetration",
+    "integrity: part 'coffee' is 100% inside 'rim' \u2014 possible accidental interpenetration",
+    "subtract: cutter 'hollow' has no supported mesh-level host (unsupported shape, misaligned axis, or containment margin) \u2014 point-cloud subtraction still applies"
+  ]
+}

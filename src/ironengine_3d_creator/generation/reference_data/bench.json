@@ -1,0 +1,73 @@
+{
+  "object": "bench",
+  "canonical_view": "side",
+  "proportion_axis": "height",
+  "license": "CC0-1.0 (hand-authored annotations by IronEngine team)",
+  "parts": [
+    {
+      "name": "seat",
+      "aliases": [
+        "seat_slats",
+        "slats"
+      ],
+      "rel_bbox": [
+        0.05,
+        0.42,
+        0.9,
+        0.1
+      ],
+      "typical_proportion": 0.1,
+      "proportion_of": "height",
+      "notes": "horizontal seat slats"
+    },
+    {
+      "name": "backrest",
+      "aliases": [
+        "back",
+        "back_slats"
+      ],
+      "rel_bbox": [
+        0.7,
+        0.5,
+        0.2,
+        0.48
+      ],
+      "typical_proportion": 0.45,
+      "proportion_of": "height",
+      "notes": "slightly reclined backrest slats"
+    },
+    {
+      "name": "leg",
+      "aliases": [
+        "legs",
+        "frame",
+        "side_frame"
+      ],
+      "rel_bbox": [
+        0.1,
+        0.0,
+        0.8,
+        0.42
+      ],
+      "typical_proportion": 0.42,
+      "proportion_of": "height",
+      "notes": "two cast-iron side frames/legs"
+    },
+    {
+      "name": "armrest",
+      "aliases": [
+        "arm",
+        "arms"
+      ],
+      "rel_bbox": [
+        0.08,
+        0.5,
+        0.84,
+        0.12
+      ],
+      "typical_proportion": 0.1,
+      "proportion_of": "height",
+      "notes": "armrests joining leg frames"
+    }
+  ]
+}

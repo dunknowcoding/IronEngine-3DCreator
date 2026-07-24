@@ -15,6 +15,10 @@ PROVIDERS = ("ollama", "lmstudio", "anthropic", "openai", "minimax", "deepseek")
 # live local probe. Consumed by `ui.panels.llm_config_panel`.
 CLOUD_PROVIDERS = ("anthropic", "openai", "minimax", "deepseek")
 
+# Default provider fallback chain (primary first): MiniMax M3 primary,
+# DeepSeek automatic fallback. Runtime execution lives in `llm.chain`.
+DEFAULT_CHAIN = ("minimax", "deepseek")
+
 
 def default_endpoint(name: str) -> str:
     """Default base URL for a provider, or "" when the SDK has its own default.
@@ -62,6 +66,82 @@ def credential_hint(name: str) -> str:
     if name in ("minimax", "deepseek"):
         sources.append("legacy Credential Manager entries")
     return "key resolves from " + " → ".join(sources)
+
+
+def known_models_fallback(name: str) -> str | None:
+    """First curated catalog model for a provider, or None when unknown.
+
+    Used when building a provider chain and no per-provider model override
+    was saved — each provider falls back to its own catalog default.
+    """
+    from . import known_models
+
+    catalog = known_models.for_provider(name.lower())
+    return catalog[0] if catalog else None
+
+
+# --------------------------------------------------------------- chain config
+def default_chain_config() -> list[dict]:
+    """Default ordered fallback chain: MiniMax primary, DeepSeek fallback."""
+    return [{"name": name, "enabled": True} for name in DEFAULT_CHAIN]
+
+
+def normalize_chain_config(raw) -> list[dict]:
+    """Coerce a stored chain config into ordered ``{name, enabled}`` dicts.
+
+    Rules:
+    - ``None`` / non-list input yields the default chain.
+    - Unknown provider names are dropped; order and enabled flags survive.
+    - Entries may be dicts (``{"name", "enabled"}``) or bare name strings.
+    - Duplicate names are collapsed (first occurrence wins).
+    - DEFAULT_CHAIN providers missing from the stored config are appended
+      (enabled) so upgraded installs keep the MiniMax → DeepSeek fallback.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return default_chain_config()
+    out: list[dict] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if isinstance(entry, str):
+            name, enabled = entry.lower(), True
+        elif isinstance(entry, dict):
+            name = str(entry.get("name", "")).lower()
+            enabled = bool(entry.get("enabled", True))
+        else:
+            continue
+        if name not in PROVIDERS or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "enabled": enabled})
+    for name in DEFAULT_CHAIN:
+        if name not in seen:
+            out.append({"name": name, "enabled": True})
+    return out
+
+
+def chain_status(raw=None, *, key_resolver=None) -> list[dict]:
+    """Per-provider status for the chain UI (non-Qt logic, fully testable).
+
+    Returns one dict per chain entry: name, enabled, default endpoint, and
+    whether a credential resolves. `key_resolver` defaults to
+    `core.secrets.get_api_key` (imported lazily); tests inject a fake.
+    """
+    cfg = normalize_chain_config(raw)
+    if key_resolver is None:
+        from ..core.secrets import get_api_key
+
+        key_resolver = get_api_key
+    out: list[dict] = []
+    for entry in cfg:
+        name = entry["name"]
+        needs_key = name in CLOUD_PROVIDERS
+        out.append({
+            "name": name,
+            "enabled": entry["enabled"],
+            "endpoint": default_endpoint(name),
+            "key_resolved": bool(key_resolver(name)) if needs_key else True,
+        })
+    return out
 
 
 def make_provider(

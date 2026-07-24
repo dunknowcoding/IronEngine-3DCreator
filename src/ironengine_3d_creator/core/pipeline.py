@@ -26,6 +26,7 @@ from ..generation.style_engine import (
     mutate_spec,
 )
 from ..llm.base import LLMProvider
+from ..llm.chain import ChainLink, ProviderChain, generate_spec_with_fallback
 from ..llm.prompts import CODE_SYSTEM_PROMPT, SPEC_SYSTEM_PROMPT
 from ..llm.repair import make_spec_validator, stream_with_repair
 
@@ -53,6 +54,10 @@ class PipelineResult:
     generation: GenerationResult
     warnings: list[str]
     raw_llm: str = ""
+    # Provenance of the accepted spec: the winning provider name
+    # (e.g. "deepseek" after a fallback), "style_engine" for the
+    # deterministic fallback, "code_mode", or "replay".
+    spec_source: str = ""
 
 
 def build_user_prompt(req: PipelineRequest) -> str:
@@ -121,26 +126,45 @@ def run(
     on_token: Callable[[str], None] | None = None,
     on_stage: Callable[[str], None] | None = None,
     stop_event: Optional[threading.Event] = None,
+    chain: ProviderChain | list[ChainLink] | None = None,
 ) -> PipelineResult:
     """Execute the full pipeline. `on_token` is called for every streaming chunk;
     `on_stage` for stage transitions ('aligning', 'sampling', 'finalizing').
 
     `stop_event` is forwarded to the provider's stream method — set it to make
-    the LLM streaming bail out promptly and close its socket."""
+    the LLM streaming bail out promptly and close its socket.
+
+    `chain` (or a `ProviderChain` passed as `provider`) enables the provider
+    fallback chain: when a provider fails (auth error, timeout, rate limit,
+    connection failure, or a spec still invalid after the self-repair round),
+    the request transparently retries with the next provider — default order
+    MiniMax → DeepSeek. Every switch is logged and appended to the warnings,
+    and the winning provider is annotated on `PipelineResult.spec_source`.
+    With a single provider (and no chain) behavior is exactly as before."""
     warnings: list[str] = []
     raw = ""
     req = _enforce_ram_cap(req, warnings)
 
+    # Resolve the fallback chain, if any.
+    links: list[ChainLink] = []
+    if chain is not None:
+        links = [l for l in chain if l.provider is not None]
+    elif isinstance(provider, ProviderChain):
+        links = list(provider)
+
     # ---- Step 1: build a spec ----------------------------------------------
-    if not req.user_prompt.strip() or provider is None:
+    if not req.user_prompt.strip() or (provider is None and not links):
         if on_stage:
             on_stage("auto")
         spec = _style_spec_for_request(req)
+        spec_source = "style_engine"
     elif req.code_mode:
         if on_stage:
             on_stage("code")
+        # Code mode runs on the primary (first chain link when chained).
+        code_provider = links[0].provider if links else provider
         chunks = []
-        for tok in provider.stream(CODE_SYSTEM_PROMPT, build_user_prompt(req), stop_event=stop_event):
+        for tok in code_provider.stream(CODE_SYSTEM_PROMPT, build_user_prompt(req), stop_event=stop_event):
             chunks.append(tok)
             if on_token:
                 on_token(tok)
@@ -167,19 +191,38 @@ def run(
             color=None,
             seed=req.seed,
         )
-        return PipelineResult(spec=spec, generation=result, warnings=warnings, raw_llm=raw)
+        return PipelineResult(spec=spec, generation=result, warnings=warnings,
+                              raw_llm=raw, spec_source="code_mode")
     else:
         if on_stage:
             on_stage("aligning")
         # Self-repair loop: the first answer is validated (parseable JSON,
         # non-empty primitives, <30% integrity churn); on failure the model
-        # gets exactly ONE repair round with the error list before we fall
-        # back to the deterministic style engine.
-        outcome = stream_with_repair(
-            provider, SPEC_SYSTEM_PROMPT, build_user_prompt(req),
-            make_spec_validator(),
-            stop_event=stop_event, on_token=on_token,
-        )
+        # gets exactly ONE repair round with the error list. With a chain, a
+        # provider that raises or stays invalid after that round hands the
+        # request to the next provider before we fall back to the
+        # deterministic style engine.
+        if links:
+            outcome = generate_spec_with_fallback(
+                links, SPEC_SYSTEM_PROMPT, build_user_prompt(req),
+                make_spec_validator(),
+                stop_event=stop_event, on_token=on_token,
+            )
+            spec_source = outcome.provider_name
+            for ev in outcome.fallbacks:
+                warnings.append(
+                    f"provider fallback: {ev.from_provider} → "
+                    f"{ev.to_provider or 'style engine'} ({ev.reason})"
+                )
+            if outcome.fell_back:
+                warnings.append(f"spec source: {spec_source} (fallback chain)")
+        else:
+            outcome = stream_with_repair(
+                provider, SPEC_SYSTEM_PROMPT, build_user_prompt(req),
+                make_spec_validator(),
+                stop_event=stop_event, on_token=on_token,
+            )
+            spec_source = getattr(provider, "name", None) or "provider"
         raw = outcome.text
         spec: GenerationSpec | None = None
         if outcome.ok:
@@ -198,6 +241,7 @@ def run(
             )
         if spec is None:
             spec = _style_spec_for_request(req)
+            spec_source = "style_engine"
         else:
             # Style 'random' on the LLM path: seeded style mutation so repeated
             # identical prompts don't yield identical objects.
@@ -228,14 +272,16 @@ def run(
 
     if on_stage:
         on_stage("done")
-    return PipelineResult(spec=spec, generation=result, warnings=warnings, raw_llm=raw)
+    return PipelineResult(spec=spec, generation=result, warnings=warnings,
+                          raw_llm=raw, spec_source=spec_source)
 
 
 def replay_spec(spec: GenerationSpec) -> PipelineResult:
     """Re-run the deterministic generator from an existing spec (no LLM)."""
     spec, warns = normalize(spec)
     spec, ifix = integrity_fix(spec)
-    return PipelineResult(spec=spec, generation=generate(spec), warnings=warns + ifix)
+    return PipelineResult(spec=spec, generation=generate(spec),
+                          warnings=warns + ifix, spec_source="replay")
 
 
 def stream_tokens(provider: LLMProvider, system: str, user: str) -> Iterator[str]:

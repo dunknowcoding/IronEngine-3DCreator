@@ -209,6 +209,47 @@ def _apply_proportion_rules(spec: GenerationSpec, warnings: list[str]) -> None:
             prim.transform = T.tolist()
 
 
+# ---------------------------------------------------------------- proportion truth tables
+#
+# World-space, real-world measurements (metres) that a finished assembly must
+# satisfy. The *placement* corrections (seat height, vase-neck ratio, capital
+# orientation) run inside `alignment.integrity.check_and_fix` — they must
+# happen after normalize so the LLM repair loop still sees the churn of a
+# structurally incoherent spec. What stays here is the feature-level ground
+# truth: soil/ground is never a pure flat sheet.
+
+_GROUND_LABELS = ("soil", "ground", "terrain", "mud", "dirt", "gravel",
+                  "lawn", "field", "land")
+
+
+def _apply_ground_truth(spec: GenerationSpec, warnings: list[str]) -> None:
+    """Soil / ground / terrain is never a pure flat sheet: auto-relief."""
+    shape = (spec.shape or "").lower()
+    targets = []
+    for p in spec.primitives:
+        label = (p.label or "").lower()
+        if any(t in label for t in _GROUND_LABELS) or shape in _GROUND_LABELS:
+            targets.append(p.label or p.kind)
+    if not targets:
+        return
+    if any(f.kind == "relief" for f in spec.features):
+        return
+    spec.features.append(Feature(
+        kind="relief",
+        region=targets[0] if len(targets) == 1 else "all",
+        params={"amplitude": 0.025, "frequency": 7.0, "octaves": 3,
+                "pebbles": 6},
+    ))
+    warnings.append(
+        "validator (truth table): ground/soil was perfectly flat → seeded "
+        "relief displacement added"
+    )
+
+
+def _apply_truth_tables(spec: GenerationSpec, warnings: list[str]) -> None:
+    _apply_ground_truth(spec, warnings)
+
+
 def normalize(spec: GenerationSpec) -> tuple[GenerationSpec, list[str]]:
     """Return (clean_spec, warnings)."""
     warnings: list[str] = []
@@ -295,4 +336,5 @@ def normalize(spec: GenerationSpec) -> tuple[GenerationSpec, list[str]]:
         seed=seed,
     )
     _apply_proportion_rules(clean_spec, warnings)
+    _apply_truth_tables(clean_spec, warnings)
     return clean_spec, warnings

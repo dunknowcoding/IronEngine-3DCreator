@@ -7,10 +7,15 @@ import numpy as np
 
 from ..alignment.schema import GenerationSpec
 from .colorize import albedo_colors, base_color
-from .features import FEATURE_FUNCS, apply_fur, apply_holes, region_mask
+from .features import FEATURE_FUNCS, apply_asperity, apply_fur, apply_holes, region_mask
 from .primitives import inside_primitive, sample_primitive
 from .sampler import allocate_budget
 from .textures import apply_texture, shape_default_material
+
+
+# Hard materials that get automatic micro-asperity so their surfaces stop
+# looking like razor-smooth CG. Strength is derived per part below.
+_ASPERITY_MATERIALS = frozenset({"stone", "wood", "concrete", "terracotta"})
 
 
 @dataclass
@@ -74,6 +79,17 @@ def generate(spec: GenerationSpec) -> GenerationResult:
         if textured is None:
             # Unbaked albedo (W8): export-ready colors carry no lighting term.
             textured = albedo_colors(world, base, rng)
+        # Hard-surface realism: subtle seeded asperity so stone/wood stops
+        # looking CG-smooth. Peak displacement ≈ 0.15 % of the part's world
+        # extent, clamped to [0.2 mm, 1.5 mm]; opt out with
+        # params["asperity"] = 0.
+        if material and material.lower() in _ASPERITY_MATERIALS and world.shape[0]:
+            opt = prim.params.get("asperity")
+            if opt is None or float(opt) > 0.0:
+                extent = float(np.max(world.max(axis=0) - world.min(axis=0))) if world.shape[0] else 0.0
+                strength = float(opt) if opt is not None else min(0.0015, max(0.0002, extent * 0.0015))
+                apply_asperity(world, textured, np.ones(world.shape[0], dtype=bool),
+                               {"strength": strength, "frequency": 40.0}, rng)
         chunks_col.append(textured)
 
     if not chunks_pos:

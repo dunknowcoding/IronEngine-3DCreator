@@ -40,6 +40,17 @@ _FAMILY_WEIGHTS: dict[str, float] = {
     "plant": 1.0,
     "vessel": 1.0,
     "abstract": 1.2,
+    "insect": 0.8,
+    "flower": 0.8,
+    "leaf": 0.6,
+    "terrain": 0.7,
+    "rococo_fence": 0.6,
+    "neoclassical_column": 0.6,
+    "modern_luxury": 0.5,
+    "futurist_chair": 0.5,
+    "desktop_computer": 0.5,
+    "spaceship": 0.5,
+    "robot": 0.5,
 }
 
 # Keyword routing: lowercase substrings → family. Checked in order; the first
@@ -47,17 +58,38 @@ _FAMILY_WEIGHTS: dict[str, float] = {
 FAMILY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "furniture": ("chair", "table", "stool", "bench", "desk", "sofa", "couch",
                   "shelf", "cabinet", "furniture", "seat", "throne"),
+    "futurist_chair": ("futuristic chair", "futurist chair", "futuristic",
+                       "futurist"),
+    "desktop_computer": ("computer", "desktop", "monitor", "keyboard",
+                         "laptop", "pc", "workstation"),
+    "spaceship": ("spaceship", "spacecraft", "starship", "rocket", "shuttle",
+                  "ufo", "satellite", "space station"),
+    "robot": ("robot", "robotic", "android", "humanoid", "droid", "automaton",
+              "cyborg", "bot"),
+    "rococo_fence": ("rococo", "fence", "railing", "balustrade", "lattice",
+                     "trellis", "picket", "wrought iron"),
+    "neoclassical_column": ("neoclassical", "doric", "ionic", "corinthian",
+                            "capital", "pilaster"),
+    "modern_luxury": ("luxury", "luxe", "premium", "penthouse"),
+    "insect": ("insect", "bug", "ladybug", "ladybird", "beetle", "ant",
+               "bee", "wasp", "butterfly", "moth", "dragonfly", "firefly",
+               "grasshopper", "cricket", "caterpillar"),
+    "flower": ("flower", "blossom", "bloom", "rose", "tulip", "daisy",
+               "sunflower", "lily", "orchid", "petal", "bouquet"),
+    "leaf": ("leaf", "leaves", "foliage", "frond"),
+    "terrain": ("soil", "terrain", "ground", "mud", "dirt", "gravel",
+                "lawn", "field", "landscape", "pebble"),
     "creature": ("creature", "animal", "beast", "monster", "cat", "dog", "bird",
-                 "rabbit", "bunny", "dragon", "insect", "spider", "critter",
+                 "rabbit", "bunny", "dragon", "spider", "critter",
                  "pet", "fox", "bear", "turtle", "frog"),
-    "mechanical": ("machine", "mechanical", "gear", "engine", "robot", "motor",
+    "mechanical": ("machine", "mechanical", "gear", "engine", "motor",
                    "piston", "vehicle", "car", "tank", "clockwork", "mech",
-                   "drone", "turbine", "automaton"),
+                   "drone", "turbine"),
     "architecture": ("arch", "archway", "column", "pillar", "temple", "bridge",
                      "tower", "building", "facade", "gate", "monument",
                      "colonnade", "ruin", "castle", "pyramid"),
-    "plant": ("tree", "plant", "flower", "bush", "shrub", "fern", "bonsai",
-              "cactus", "branch", "leaf", "vine", "mushroom", "forest"),
+    "plant": ("tree", "plant", "bush", "shrub", "fern", "bonsai",
+              "cactus", "branch", "vine", "mushroom", "forest"),
     "vessel": ("vase", "pot", "jar", "jug", "cup", "mug", "bottle", "bowl",
                "urn", "pitcher", "kettle", "vessel", "container", "amphora",
                "chalice", "goblet"),
@@ -125,10 +157,15 @@ def weighted_random_family(rng: np.random.Generator) -> str:
 def _local_half_extent(kind: str, params: dict) -> tuple[float, float, float]:
     """Conservative local-space half extents of a primitive kind."""
     g = params.get
-    if kind == "box" or kind == "panel":
+    if kind == "box":
         s = g("size", [1, 1, 1])
         s = (s + [1, 1, 1])[:3] if len(s) < 3 else s
         return (s[0] / 2, s[1] / 2, s[2] / 2)
+    if kind == "panel":
+        # Panel size is the 2-element in-plane [w, l]; thickness is separate.
+        s = g("size", [1, 1])
+        t = float(g("thickness", 0.02))
+        return (s[0] / 2, (s[1] if len(s) > 1 else s[0]) / 2, t / 2)
     if kind == "sphere":
         r = float(g("radius", 0.5))
         return (r, r, r)
@@ -170,6 +207,25 @@ def _union_aabb(primitives: list[Primitive]) -> tuple[np.ndarray, np.ndarray]:
     hi = np.full(3, -np.inf)
     for p in primitives:
         T = np.asarray(p.transform, dtype=np.float64)
+        path = (p.params or {}).get("path")
+        if p.kind in ("tube", "sweep") and path:
+            # Path-based parts: exact AABB of the swept tube = for each
+            # centerline segment, endpoint range inflated by the radius in
+            # the directions PERPENDICULAR to the segment (inflating along
+            # the axis too would overestimate the extent by r at each end
+            # and misground the whole assembly).
+            pts = np.asarray(path, dtype=np.float64).reshape(-1, 3)
+            r = max(float(p.params.get("radius", 0.05)),
+                    float(p.params.get("radius2", 0.0) or 0.0))
+            world = pts @ T[:3, :3].T + T[:3, 3]
+            for a, b in zip(world[:-1], world[1:]):
+                d = b - a
+                n = float(np.linalg.norm(d))
+                d = d / n if n > 1e-12 else np.array([0.0, 1.0, 0.0])
+                perp = r * (1.0 - np.abs(d))
+                lo = np.minimum(lo, np.minimum(a, b) - perp)
+                hi = np.maximum(hi, np.maximum(a, b) + perp)
+            continue
         h = np.asarray(_local_half_extent(p.kind, p.params))
         half = np.abs(T[:3, :3]) @ h
         c = T[:3, 3]

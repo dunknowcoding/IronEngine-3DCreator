@@ -286,6 +286,92 @@ def apply_fur(
     return new_pos.astype(np.float32), new_col.astype(np.float32)
 
 
+def _value_noise(coords: np.ndarray, freq: float, rng: np.random.Generator,
+                 octaves: int = 3) -> np.ndarray:
+    """Seeded multi-octave value noise in [-1, 1] for a (N, 3) coord array.
+
+    Cheap sin-hash noise (same family as generation.textures._grad_noise but
+    signed and octave-stacked): deterministic under the compositor's seeded
+    RNG, no scipy / external noise lib needed.
+    """
+    seeds = rng.uniform(-1.0, 1.0, (octaves, 3)).astype(np.float64)
+    out = np.zeros(coords.shape[0], dtype=np.float64)
+    amp, total = 1.0, 0.0
+    for o in range(octaves):
+        out += amp * np.sin(coords @ seeds[o] * freq * (1.7 ** o)
+                            + float(rng.uniform(0.0, 2.0 * math.pi)))
+        total += amp
+        amp *= 0.5
+    return out / max(total, 1e-12)
+
+
+def apply_asperity(
+    positions: np.ndarray,
+    colors: np.ndarray,
+    mask: np.ndarray,
+    params: dict,
+    rng: np.random.Generator,
+) -> None:
+    """Micro surface roughness — subtle seeded bidirectional normal noise.
+
+    Breaks the razor-perfect CG look on stone / wood / soil / cast metal.
+    `strength` is the peak displacement in metres (default 1 mm); `frequency`
+    scales the noise field (higher = finer grain). Displacement follows the
+    estimated local surface normal so slabs roughen perpendicular to their
+    faces instead of sliding sideways.
+    """
+    strength = float(params.get("strength", 0.001))
+    frequency = float(params.get("frequency", 35.0))
+    if strength <= 0.0 or not mask.any():
+        return
+    idxs = np.where(mask)[0]
+    pts = positions[idxs]
+    nrm = estimate_surface_normals(pts)
+    noise = _value_noise(pts.astype(np.float64), frequency, rng, octaves=2)
+    positions[idxs] = pts + nrm * (strength * noise).astype(np.float32)[:, None]
+    # Grain shows in the colour too: ±4 % albedo modulation.
+    colors[idxs] *= (1.0 + 0.04 * noise).astype(np.float32)[:, None]
+
+
+def apply_relief(
+    positions: np.ndarray,
+    colors: np.ndarray,
+    mask: np.ndarray,
+    params: dict,
+    rng: np.random.Generator,
+) -> None:
+    """Large-scale terrain-style relief — ground/soil is never a flat sheet.
+
+    Multi-octave displacement along the surface normal (for a ground plane
+    that is +Y) with a few octave layers so the result reads as clods and
+    undulation rather than uniform jitter. Optional `pebbles` adds a handful
+    of small local mounds. Colour darkens in the dips for readability.
+    """
+    amplitude = float(params.get("amplitude", 0.02))
+    frequency = float(params.get("frequency", 6.0))
+    octaves = int(params.get("octaves", 3))
+    pebbles = int(params.get("pebbles", 0))
+    if amplitude <= 0.0 or not mask.any():
+        return
+    idxs = np.where(mask)[0]
+    pts = positions[idxs]
+    nrm = estimate_surface_normals(pts)
+    noise = _value_noise(pts.astype(np.float64), frequency, rng, octaves=octaves)
+    disp = amplitude * noise
+    if pebbles > 0:
+        # A few compact mounds on top of the base undulation.
+        centres = pts[rng.choice(pts.shape[0], size=min(pebbles, pts.shape[0]),
+                                 replace=False)]
+        pr = amplitude * 1.6
+        for c in centres:
+            d = np.linalg.norm(pts - c, axis=1)
+            fall = np.clip(1.0 - d / pr, 0.0, None) ** 2
+            disp += amplitude * 0.8 * fall
+    positions[idxs] = pts + nrm * disp.astype(np.float32)[:, None]
+    # Dips read darker (ambient-occlusion cheat).
+    colors[idxs] *= (0.92 + 0.16 * (noise * 0.5 + 0.5)).astype(np.float32)[:, None]
+
+
 FEATURE_FUNCS = {
     "scratch": apply_scratch,
     "curve_pattern": apply_curve_pattern,
@@ -293,5 +379,7 @@ FEATURE_FUNCS = {
     "dent": apply_dent,
     "erosion": apply_erosion,
     "ridges": apply_ridges,
+    "relief": apply_relief,
+    "asperity": apply_asperity,
     # `holes` and `fur` are handled specially by the compositor.
 }

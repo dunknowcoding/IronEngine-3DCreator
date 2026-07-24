@@ -40,6 +40,46 @@ def _try_cupy():
         return None
 
 
+def _auto_bevel(half_extents, params: dict) -> float:
+    """Resolve the edge micro-chamfer width (metres).
+
+    ``params["bevel"]`` wins when present (0 disables). Otherwise a small
+    default chamfer is derived from the part size so hard-surface slabs no
+    longer have razor-perfect CG edges: 6 % of the smallest half-extent,
+    clamped to [0.5 mm, 4 mm].
+    """
+    b = params.get("bevel")
+    if b is not None:
+        return max(0.0, float(b))
+    h = float(np.min(half_extents))
+    if h <= 1e-6:
+        return 0.0
+    return float(min(0.004, max(0.0005, h * 0.06)))
+
+
+def _chamfer_box_points(pts: np.ndarray, half: np.ndarray, bevel: float) -> np.ndarray:
+    """In-place 45° micro-chamfer of box surface points near the 12 edges.
+
+    Points that sit within `bevel` of *two* face boundaries (i.e. on an edge
+    strip) are pushed inward onto the chamfer plane. Corners (three
+    boundaries) are handled by running the three axis pairs in sequence.
+    """
+    if bevel <= 0.0 or pts.shape[0] == 0:
+        return pts
+    for i, j in ((0, 1), (0, 2), (1, 2)):
+        over_i = np.abs(pts[:, i]) - (half[i] - bevel)
+        over_j = np.abs(pts[:, j]) - (half[j] - bevel)
+        sel = (over_i > 0.0) & (over_j > 0.0)
+        if not sel.any():
+            continue
+        excess = (over_i[sel] + over_j[sel]) * 0.5
+        push_i = np.minimum(excess, over_i[sel])
+        push_j = np.minimum(excess, over_j[sel])
+        pts[sel, i] -= np.sign(pts[sel, i]) * push_i
+        pts[sel, j] -= np.sign(pts[sel, j]) * push_j
+    return pts
+
+
 def sample_box(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
     sx, sy, sz = params.get("size", [1.0, 1.0, 1.0])
     hx, hy, hz = sx / 2, sy / 2, sz / 2
@@ -64,7 +104,9 @@ def sample_box(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
     out.append(np.stack([np.full_like(u, hx), u, v], axis=-1))
     u = rng.uniform(-hy, hy, counts[5]); v = rng.uniform(-hz, hz, counts[5])
     out.append(np.stack([np.full_like(u, -hx), u, v], axis=-1))
-    return _stack(*out)
+    pts = _stack(*out)
+    bevel = _auto_bevel(np.array([hx, hy, hz], dtype=np.float64), params)
+    return _chamfer_box_points(pts, np.array([hx, hy, hz], dtype=np.float32), bevel)
 
 
 def sample_sphere(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
@@ -513,7 +555,7 @@ def _panel_face_areas(w: float, h: float, t: float, bend: float) -> np.ndarray:
 def sample_panel(n: int, params: dict, rng: np.random.Generator) -> np.ndarray:
     w, h, t, bend = panel_geometry(params)
     if abs(bend) < 1e-9:
-        return sample_box(n, {"size": [w, h, t]}, rng)
+        return sample_box(n, {"size": [w, h, t], "bevel": params.get("bevel")}, rng)
     rc = w / abs(bend)
     areas = _panel_face_areas(w, h, t, bend)
     counts = rng.multinomial(n, areas / areas.sum())

@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## 2026-07-23 (provider fallback chain)
+
+MiniMax M3 primary → DeepSeek automatic fallback, end to end.
+
+- Added `llm/chain.py`: an ordered provider fallback chain. When a provider fails — auth error, timeout, rate limit, connection failure, or a spec still invalid after the self-repair round — the pipeline transparently retries with the next provider (default order MiniMax → DeepSeek), logs every switch as a `FallbackEvent`, and annotates the spec's source. Failure classification (`classify_failure`) works off status codes / exception types / messages without importing any SDK. Includes `build_chain` / `chain_from_settings` constructors and a lightweight urllib `probe_endpoint` reachability check.
+- `core/pipeline.py` accepts a `chain=` (or a `ProviderChain` as `provider`) and runs the spec route through `generate_spec_with_fallback`; `PipelineResult.spec_source` now records provenance ("minimax" / "deepseek" / "style_engine" / "code_mode" / "replay") and fallback switches appear in the warnings. Single-provider behavior is byte-for-byte unchanged, including cancellation semantics (stop_event never starts a new provider).
+- Chain configuration lives in `llm/registry.py`: `DEFAULT_CHAIN`, `default_chain_config`, `normalize_chain_config` (order + per-provider enable/disable, unknown names dropped, missing defaults appended on upgrade), and `chain_status` (per-provider key-resolved map for the UI).
+- The LLM config panel shows the ordered fallback chain with per-provider status (key resolved? endpoint reachable?), lets the user reorder (▲/▼) and disable entries, persists the config under settings `llm.chain`, and can build the runnable chain via `build_chain()`. A "Probe chain" button checks key resolution and `/models` reachability off the UI thread.
+- Added `tests/test_provider_fallback.py`: chain config, failure taxonomy, fallback on auth/timeout/rate-limit/invalid-spec (mocked), no-fallback-on-success, chain-exhausted → style engine, offline path unchanged, plus a real-HTTP-over-localhost end-to-end test (real openai SDK, stub servers: 401 primary → streaming fallback). The live DeepSeek run is opt-in (`IRONENGINE_REAL_API=1`, class `TestDeepSeekFallbackRealAPI`): it discovers model ids via `GET /models`, forces MiniMax to fail via a bad endpoint override, and writes evidence to the e2e proof directory — skips, never fails, on missing or rejected credentials.
+- Known issue: the DeepSeek key currently stored in Windows Credential Manager (both `IronEngine.3DCreator/deepseek` and the legacy Paperfessor entry, identical, suffix 3770) is rejected by the live API with HTTP 401 "Your api key is invalid". Resolution via `core.secrets.get_api_key('deepseek')` works; a valid key must be stored before the opt-in real-API proof can run.
+
 ## 2026-07-23 (wiring wave)
 
 Self-repair wiring, DeepSeek in the UI, panel-native style families.

@@ -229,6 +229,85 @@ def cloth_corner_pins(resolution: tuple[int, int]) -> list[int]:
     return [0, w - 1, (h - 1) * w, h * w - 1]
 
 
+def _drape_cylinder(
+    vertices: np.ndarray,
+    normals: np.ndarray,
+    width: float,
+    depth: float,
+    radius: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Wrap the flat XZ grid around a vertical cylinder (towel over a bucket).
+
+    The grid's X extent becomes arc length around the cylinder (angle
+    preserved: theta = x / radius) and the Z extent hangs vertically
+    downward from y = 0 (top edge) to y = -depth (free hem).
+    """
+    radius = float(radius)
+    if radius <= 0.0:
+        raise ValueError(f"drape_radius must be > 0, got {radius}")
+    theta = vertices[:, 0] / radius
+    r = radius + vertices[:, 1]  # allow pre-existing thickness offsets
+    out = np.stack(
+        [
+            r * np.sin(theta),
+            -(vertices[:, 2] + depth / 2.0),
+            r * np.cos(theta) - radius,
+        ],
+        axis=-1,
+    )
+    nrm = np.stack(
+        [
+            normals[:, 0] * np.cos(theta) + normals[:, 1] * np.sin(theta),
+            normals[:, 2] * 0.0,
+            -normals[:, 0] * np.sin(theta) + normals[:, 1] * np.cos(theta),
+        ],
+        axis=-1,
+    )
+    return out.astype(np.float32), nrm.astype(np.float32)
+
+
+def _solidify_sheet(
+    vertices: np.ndarray,
+    normals: np.ndarray,
+    uvs: np.ndarray,
+    faces: np.ndarray,
+    thickness: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Give a zero-thickness sheet real volume: a back layer offset along
+    -normal with reversed winding, stitched to the front along the border."""
+    thickness = float(thickness)
+    if thickness <= 0.0:
+        return vertices, normals, uvs, faces
+    n = vertices.shape[0]
+    back_v = vertices - thickness * normals
+    back_n = -normals
+    # Border stitching: deduplicated boundary edges from the front faces.
+    edge_count: dict[tuple[int, int], int] = {}
+    directed: dict[tuple[int, int], tuple[int, int]] = {}
+    for tri in faces:
+        for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+            key = (int(min(a, b)), int(max(a, b)))
+            edge_count[key] = edge_count.get(key, 0) + 1
+            directed.setdefault(key, (int(a), int(b)))
+    stitch: list[list[int]] = []
+    for key, cnt in edge_count.items():
+        if cnt == 1:
+            a, b = directed[key]
+            stitch.append([a, b, n + b])
+            stitch.append([a, n + b, n + a])
+    all_v = np.concatenate([vertices, back_v], axis=0)
+    all_n = np.concatenate([normals, back_n], axis=0)
+    all_uv = np.concatenate([uvs, uvs], axis=0)
+    back_f = faces[:, [0, 2, 1]] + n
+    all_f = np.concatenate([faces, back_f] + ([np.asarray(stitch, dtype=np.int64)] if stitch else []), axis=0)
+    return (
+        all_v.astype(np.float32),
+        all_n.astype(np.float32),
+        all_uv.astype(np.float32),
+        all_f.astype(np.int64),
+    )
+
+
 def author_cloth(
     material: str = "cotton",
     width: float = 0.6,
@@ -238,12 +317,26 @@ def author_cloth(
     n_points: int = 4000,
     color: tuple[float, float, float] | None = None,
     seed: int = 0,
+    drape: str | None = None,
+    drape_radius: float | None = None,
+    thickness: float = 0.0,
+    weave: bool = False,
 ) -> SoftAuthorResult:
     """Cloth sheet (towel): grid mesh + iemodel/3 ``soft_body`` block.
 
     ``pins`` is ``"corners"`` (default), ``"top_edge"``, ``"none"``, or an
     explicit iterable of grid-vertex indices. Stiffness / damping / mass come
     from :data:`CLOTH_FABRICS`.
+
+    Surface-realism options (all default off, fully backward compatible):
+
+    - ``drape="cylinder"`` + ``drape_radius``: wrap the sheet around a
+      vertical cylinder — towel over a bucket rim (top edge at y=0, hem
+      hanging to y=-depth).
+    - ``thickness``: real sheet volume in meters — a back layer offset along
+      -normal, stitched at the borders (default 0 = single surface).
+    - ``weave=True``: warp/weft albedo modulation (±4 %) on the point cloud
+      so the textile reads as woven instead of flat plastic.
     """
     fabric = CLOTH_FABRICS.get(str(material).lower())
     if fabric is None:
@@ -269,21 +362,61 @@ def author_cloth(
     area = float(width) * float(depth)
     mass_kg = fabric["area_density_kg_m2"] * area
 
-    # Point cloud: uniform samples on the sheet (a textured plane).
+    # --- optional shaping (surface realism; all default off) ----------------
+    do_drape = drape is not None
+    if do_drape:
+        if str(drape).lower() != "cylinder":
+            raise ValueError(f"unknown drape mode {drape!r}; supported: 'cylinder'")
+        vertices, normals = _drape_cylinder(
+            vertices, normals, width, depth,
+            drape_radius if drape_radius is not None else width / math.pi,
+        )
+    if thickness > 0.0:
+        vertices, normals, uvs, faces = _solidify_sheet(
+            vertices, normals, uvs, faces, thickness
+        )
+
+    # Point cloud: uniform samples on the sheet (a textured plane), shaped the
+    # same way as the mesh so renders match the analytic surface.
     px = rng.uniform(-width / 2.0, width / 2.0, n_points)
     pz = rng.uniform(-depth / 2.0, depth / 2.0, n_points)
     positions = np.stack([px, np.zeros_like(px), pz], axis=-1).astype(np.float32)
+    if do_drape:
+        positions, _ = _drape_cylinder(
+            positions, np.tile(np.array([[0.0, 1.0, 0.0]], dtype=np.float32), (n_points, 1)),
+            width, depth,
+            drape_radius if drape_radius is not None else width / math.pi,
+        )
     colors = _cloud_colors(positions, color, rng)
-    labels = np.zeros(n_points, dtype=np.int32)
+    if weave:
+        # Warp/weft checkerboard albedo modulation (±4 %), period ~4 mm.
+        u = px / float(width) + 0.5
+        v = pz / float(depth) + 0.5
+        cell = 0.004
+        check = (np.floor(u * float(width) / cell) + np.floor(v * float(depth) / cell)) % 2
+        colors = np.clip(colors * (1.0 + 0.04 * (2.0 * check - 1.0))[:, None], 0.0, 1.0)
+    if thickness > 0.0:
+        # Second (back) layer of points so the hem reads as a solid edge.
+        back = positions.copy()
+        if do_drape:
+            theta = px / (drape_radius if drape_radius is not None else width / math.pi)
+            radial = np.stack([np.sin(theta), np.zeros(n_points), np.cos(theta)], axis=-1)
+        else:
+            radial = np.tile(np.array([[0.0, 1.0, 0.0]], dtype=np.float32), (n_points, 1))
+        back = back - float(thickness) * radial
+        positions = np.concatenate([positions, back.astype(np.float32)], axis=0)
+        colors = np.concatenate([colors, colors], axis=0)
+    labels = np.zeros(positions.shape[0], dtype=np.int32)
 
+    eff_thickness = float(thickness) if thickness > 0.0 else 8e-4
     part = _make_part(
         "cloth", "cloth_sheet", "fabric", vertices, normals, uvs, faces,
-        solid_volume_m3=area * 8e-4,  # nominal 0.8 mm textile sheet
+        solid_volume_m3=area * eff_thickness,
     )
     spec = GenerationSpec(
         shape="abstract",
         n_points=int(n_points),
-        bbox_size=(float(width), 8e-4, float(depth)),
+        bbox_size=(float(width), eff_thickness, float(depth)),
         primitives=[
             _primitive("plane", {"size": [float(width), float(depth)], "material": "fabric"}, "cloth")
         ],
@@ -310,6 +443,16 @@ def author_cloth(
             "resolution": [w, h],
         },
     }
+    # Non-default realism options are reported, defaults keep the legacy dict.
+    if do_drape:
+        extras["cloth"]["drape"] = "cylinder"
+        extras["cloth"]["drape_radius_m"] = float(
+            drape_radius if drape_radius is not None else width / math.pi
+        )
+    if thickness > 0.0:
+        extras["cloth"]["thickness_m"] = float(thickness)
+    if weave:
+        extras["cloth"]["weave"] = True
     return SoftAuthorResult(positions, colors, labels, ["cloth"], [part], spec, extras)
 
 

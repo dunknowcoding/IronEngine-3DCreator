@@ -632,6 +632,452 @@ def _flag_interpenetration(spec: GenerationSpec, info: list[_PrimAABB], warnings
                 flagged.add(smaller.index)
 
 
+# ---------------------------------------------------------------- proportion truth tables
+#
+# World-space, real-world measurements (metres) a finished assembly must
+# satisfy, checked against the *placed* geometry and auto-corrected with a
+# warning. These run inside check_and_fix (after the shape-specific repairs)
+# so the LLM repair loop still observes the churn of an incoherent spec.
+#   - furniture: seat / tabletop surface height (legs stretched or squashed
+#     to bring the surface into range);
+#   - vase / vessel: neck must be narrower than the belly;
+#   - capital / echinus cones: wide end UP (apex down) — a cone whose local
+#     +Y (apex) points world-up is the classic "reversed cone" LLM mistake.
+
+# Sitting / working surface height ranges by shape. Nominals follow the
+# furniture truth table (chair seat 0.45 m, bench 0.42–0.48 m, table
+# 0.72–0.76 m); the acceptance band keeps a few cm of manufacturing
+# tolerance around the nominal.
+_SURFACE_TRUTH: dict[str, tuple[float, float]] = {
+    "chair": (0.43, 0.50),
+    "stool": (0.42, 0.52),
+    "bench": (0.42, 0.48),
+    "table": (0.72, 0.76),
+    "desk": (0.72, 0.76),
+}
+
+_CAPITAL_LABELS = ("capital", "echinus")
+_VESSEL_SHAPES = ("vase", "vessel", "urn", "amphora", "jar", "jug", "pot",
+                  "bottle", "pitcher", "chalice", "goblet")
+
+
+def _scale_world_y(prim: Primitive, new_bottom: float, new_top: float) -> None:
+    """Stretch/squash a primitive along world Y so its AABB spans
+    [new_bottom, new_top]. Only used on near-vertical members (legs)."""
+    lo, hi = _world_aabb(prim)
+    old_span = float(hi[1] - lo[1])
+    new_span = float(new_top - new_bottom)
+    if old_span < 1e-9 or new_span <= 1e-6:
+        return
+    factor = new_span / old_span
+    T = np.asarray(prim.transform_matrix(), dtype=np.float64)
+    T[1, :3] *= factor  # scale the world-Y row: y' = factor * (row1 · p)
+    prim.transform = T.tolist()
+    # Re-anchor: put the (possibly moved) bottom at new_bottom.
+    lo2, _ = _world_aabb(prim)
+    T = np.asarray(prim.transform_matrix(), dtype=np.float64)
+    T[1, 3] += float(new_bottom - lo2[1])
+    prim.transform = T.tolist()
+
+
+def _repair_surface_truth(spec: GenerationSpec, info: list[_PrimAABB],
+                          warnings: list[str]) -> None:
+    """Furniture surface heights must land in their real-world range.
+
+    Violations are corrected by stretching/squashing the legs to hit the
+    target height, then re-seating the slab (plus anything above it) on the
+    new leg tops — the assembly stays fully joined.
+    """
+    rng = _SURFACE_TRUTH.get((spec.shape or "").lower())
+    if rng is None:
+        return
+    info[:] = _summary(spec.primitives)
+    seats = [p for p in info if p.role == "seat"]
+    legs = [p for p in info if p.role == "leg"]
+    if not seats or not legs:
+        return
+    seat = seats[0]
+    surface = float(seat.centre[1] + seat.half[1])
+    if rng[0] - 1e-4 <= surface <= rng[1] + 1e-4:
+        return
+    target = min(max(surface, rng[0]), rng[1])
+    underside = target - 2.0 * float(seat.half[1])  # slab underside
+    warnings.append(
+        f"integrity (truth table): {spec.shape} surface height {surface:.3f}m "
+        f"outside {rng[0]:.2f}–{rng[1]:.2f}m → corrected to {target:.3f}m"
+    )
+    for leg in legs:
+        _scale_world_y(spec.primitives[leg.index], 0.0, underside + _WELD_EMBED)
+    info[:] = _summary(spec.primitives)
+    legs = [p for p in info if p.role == "leg"]
+    seats = [p for p in info if p.role == "seat"]
+    leg_top = max(float(l.centre[1] + l.half[1]) for l in legs)
+    delta = leg_top - _WELD_EMBED - float(seats[0].centre[1] - seats[0].half[1])
+    for p in info:
+        if p.role in ("seat", "back", "cap", "finial"):
+            T = np.asarray(spec.primitives[p.index].transform_matrix(),
+                           dtype=np.float64)
+            T[1, 3] += float(delta)
+            spec.primitives[p.index].transform = T.tolist()
+    info[:] = _summary(spec.primitives)
+
+
+def _repair_vessel_truth(spec: GenerationSpec, info: list[_PrimAABB],
+                         warnings: list[str]) -> None:
+    """Vase neck must be narrower than the belly (a 'bucket' has no neck)."""
+    if (spec.shape or "").lower() not in _VESSEL_SHAPES:
+        return
+    info[:] = _summary(spec.primitives)
+    necks = [p for p in info if "neck" in p.label.lower()]
+    if not necks:
+        return
+    body_r = 0.0
+    for p in info:
+        label = p.label.lower()
+        if any(t in label for t in ("neck", "rim", "handle", "lid", "foot")):
+            continue
+        body_r = max(body_r, float(max(p.half[0], p.half[2])))
+    if body_r <= 1e-6:
+        return
+    for neck in necks:
+        neck_r = float(max(neck.half[0], neck.half[2]))
+        if neck_r < body_r * 0.92:
+            continue
+        factor = (body_r * 0.55) / max(neck_r, 1e-9)
+        prim = spec.primitives[neck.index]
+        T = np.asarray(prim.transform_matrix(), dtype=np.float64)
+        T[0, :3] *= factor
+        T[2, :3] *= factor
+        prim.transform = T.tolist()
+        warnings.append(
+            f"integrity (truth table): vase neck radius {neck_r:.3f}m ≥ belly "
+            f"{body_r:.3f}m → neck narrowed to {body_r * 0.55:.3f}m"
+        )
+    info[:] = _summary(spec.primitives)
+
+
+def _repair_orientation_truth(spec: GenerationSpec, info: list[_PrimAABB],
+                              warnings: list[str]) -> None:
+    """Capital / echinus cones: wide end UP, apex DOWN.
+
+    A cone's apex is at local +Y; if the transform maps local +Y to world +Y
+    the capital is a 'reversed cone' (pointy end up). Flip it 180° about the
+    local X axis (Y → −Y, Z → −Z), keeping the part centred in place.
+    """
+    flipped = False
+    for prim in spec.primitives:
+        if prim.kind != "cone":
+            continue
+        label = (prim.label or "").lower()
+        if not any(t in label for t in _CAPITAL_LABELS):
+            continue
+        T = np.asarray(prim.transform_matrix(), dtype=np.float64)
+        col_y = T[:3, 1]
+        n = np.linalg.norm(col_y)
+        if n < 1e-12:
+            continue
+        if float(col_y[1]) / n <= 0.0:
+            continue  # apex already points down (or sideways — leave exotic)
+        flip = np.diag([1.0, -1.0, -1.0])
+        T[:3, :3] = T[:3, :3] @ flip
+        prim.transform = T.tolist()
+        flipped = True
+        warnings.append(
+            f"integrity (truth table): capital {prim.label!r} was a reversed "
+            f"cone (apex up) → flipped wide-end-up"
+        )
+    if flipped:
+        info[:] = _summary(spec.primitives)
+
+
+def _repair_truth_tables(spec: GenerationSpec, info: list[_PrimAABB],
+                         warnings: list[str]) -> None:
+    _repair_orientation_truth(spec, info, warnings)
+    _repair_surface_truth(spec, info, warnings)
+    _repair_vessel_truth(spec, info, warnings)
+
+
+# ---------------------------------------------------------------- attachment solver
+
+_WELD_TOL = 0.002        # 2 mm: AABB gap that still counts as "touching"
+_WELD_EMBED = 0.0015     # 1.5 mm: deliberate overlap at a welded join
+_MAX_PENETRATION = 0.002 # 2 mm: max idiomatic join intrusion (else auto-offset)
+_GROUND_TOL = 0.0025     # 2.5 mm: bottom this close to y=0 counts as grounded
+
+# Shapes where the attachment solver may NOT weld parts together: abstract
+# sculpture intentionally floats satellites / interlocks loops in the air.
+_SOLVER_SKIP_SHAPES = frozenset({"abstract"})
+
+# Shapes where the intrusion clamp may NOT lift parts: organic assemblies
+# (creature limbs, insect legs, flower stamens, leaf midribs) embed into
+# their parent body BY DESIGN, and their curved parts (ellipsoids, spheres,
+# path tubes) have AABBs that grossly overestimate the true overlap — an
+# AABB-based penetration rule would shred the anatomy.
+_INTRUSION_SKIP_SHAPES = frozenset({
+    "creature", "animal", "quadruped", "insect", "flower", "leaf", "plant",
+})
+
+
+def _union_find_components(info: list[_PrimAABB]) -> dict[int, int]:
+    """Union-find over AABB contact (gap ≤ weld tolerance).
+
+    Returns {primitive_index: root_index}. Parts that touch (or overlap) are
+    one component; fence pickets connect through their rails, legs through
+    the seat, etc.
+    """
+    parent = {p.index: p.index for p in info}
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for i in range(len(info)):
+        for j in range(i + 1, len(info)):
+            if _euclidean_min_gap(info[i], info[j]) <= _WELD_TOL:
+                union(info[i].index, info[j].index)
+    return {p.index: find(p.index) for p in info}
+
+
+def _grounded_roots(spec: GenerationSpec, info: list[_PrimAABB],
+                    roots: dict[int, int]) -> set[int]:
+    grounded = set()
+    for p in info:
+        bottom = float(p.centre[1] - p.half[1])
+        if bottom <= _GROUND_TOL:
+            grounded.add(roots[p.index])
+    return grounded
+
+
+def _floating_parts(spec: GenerationSpec, info: list[_PrimAABB]) -> list[_PrimAABB]:
+    """Parts with no contact-chain path to the ground plane."""
+    if len(info) <= 1:
+        return []
+    roots = _union_find_components(info)
+    grounded = _grounded_roots(spec, info, roots)
+    return [p for p in info if roots[p.index] not in grounded]
+
+
+def _xz_overlap(a: _PrimAABB, b: _PrimAABB, slack: float = 0.0) -> bool:
+    return (
+        abs(a.centre[0] - b.centre[0]) <= (a.half[0] + b.half[0] + slack)
+        and abs(a.centre[2] - b.centre[2]) <= (a.half[2] + b.half[2] + slack)
+    )
+
+
+def _solve_attachments(spec: GenerationSpec, info: list[_PrimAABB],
+                       warnings: list[str]) -> None:
+    """Weld every floating part onto the grounded component.
+
+    Two strategies per floating part, in order:
+      1. **Vertical drop** — when a grounded part's XZ footprint overlaps the
+         floater and its top is (roughly) below the floater's bottom, the
+         floater is lowered so its bottom welds 1.5 mm into the supporter's
+         top. This is the common case: seats hovering over legs, abacuses
+         over capitals, lids over jars.
+      2. **Nearest pull** — otherwise translate toward the nearest grounded
+         part along their separation axis until the AABBs overlap by the
+         weld embed.
+
+    The loop re-grounds newly welded parts so whole dangling chains
+    (abacus → capital → shaft → plinth) reattach in one pass. Parts sunk
+    more than 1 cm below the floor are lifted back onto it first.
+    """
+    if (spec.shape or "").lower() in _SOLVER_SKIP_SHAPES:
+        return
+
+    # Below-floor rescue: clearly sunken parts are lifted onto the floor.
+    info[:] = _summary(spec.primitives)
+    for p in info:
+        bottom = float(p.centre[1] - p.half[1])
+        if bottom < -0.01:
+            prim = spec.primitives[p.index]
+            T = prim.transform_matrix()
+            T[1, 3] += float(-bottom)
+            prim.transform = T.tolist()
+            warnings.append(
+                f"integrity (attachment): lifted {p.label or p.kind!r} "
+                f"{-bottom * 1000:.0f}mm out of the floor"
+            )
+    info[:] = _summary(spec.primitives)
+
+    for _ in range(max(4, 2 * len(info))):
+        floating = _floating_parts(spec, info)
+        if not floating:
+            break
+        floating_ids = {p.index for p in floating}
+        grounded_info = [p for p in info if p.index not in floating_ids]
+        if not grounded_info:
+            break  # nothing grounded at all — leave the spec alone
+        progress = False
+        for a in floating:
+            a_bottom = float(a.centre[1] - a.half[1])
+            # 1) vertical drop onto the best supporter below us.
+            supporters = [
+                b for b in grounded_info
+                if _xz_overlap(a, b, slack=0.01)
+                and float(b.centre[1] + b.half[1]) <= a_bottom + a.half[1] * 0.5
+            ]
+            if supporters:
+                b = max(supporters,
+                        key=lambda b: float(b.centre[1] + b.half[1]))
+                target_bottom = float(b.centre[1] + b.half[1]) - _WELD_EMBED
+                delta = target_bottom - a_bottom
+                if abs(delta) > 1e-4:
+                    prim = spec.primitives[a.index]
+                    T = prim.transform_matrix()
+                    T[1, 3] += float(delta)
+                    prim.transform = T.tolist()
+                    warnings.append(
+                        f"integrity (attachment): welded {a.label or a.kind!r} "
+                        f"down onto {b.label or b.kind!r} "
+                        f"(gap {-delta * 1000:.0f}mm)"
+                    )
+                    progress = True
+                    continue
+            # 2) nearest pull toward the grounded component.
+            candidates = [
+                (b, _euclidean_min_gap(a, b)) for b in grounded_info
+                if not (a.role == "vbar" and b.role == "vbar")
+            ]
+            if not candidates:
+                continue
+            b, gap = min(candidates, key=lambda x: x[1])
+            if gap <= _WELD_TOL:
+                continue
+            direction = b.centre - a.centre
+            norm = float(np.linalg.norm(direction))
+            if norm < 1e-9:
+                continue
+            offset = direction / norm * (gap + _WELD_EMBED)
+            prim = spec.primitives[a.index]
+            T = prim.transform_matrix()
+            T[0, 3] += float(offset[0])
+            T[1, 3] += float(offset[1])
+            T[2, 3] += float(offset[2])
+            prim.transform = T.tolist()
+            warnings.append(
+                f"integrity (attachment): welded {a.label or a.kind!r} "
+                f"{gap * 1000:.0f}mm → {b.label or b.kind!r}"
+            )
+            progress = True
+        info[:] = _summary(spec.primitives)
+        if not progress:
+            break
+    info[:] = _summary(spec.primitives)
+
+
+def _clamp_vertical_intrusion(spec: GenerationSpec, info: list[_PrimAABB],
+                              warnings: list[str]) -> None:
+    """Lift upper parts that sink too deep into the part below them.
+
+    Joins are expected to interpenetrate by ~1–2 mm (the weld embed); a part
+    whose bottom plunges deeper than max(2 mm, 25 % of its own height) into
+    the part directly below reads as *intrusion*, not attachment. The upper
+    part is lifted until the penetration equals the weld embed.
+
+    Pairs where the *lower* part is a support member (leg / vbar / stem /
+    base) are skipped — limbs and posts are designed to embed into what they
+    carry (legs into a body, posts into a capital).
+    """
+    if (spec.shape or "").lower() in _INTRUSION_SKIP_SHAPES:
+        return
+    info[:] = _summary(spec.primitives)
+    skip_lower = ("leg", "vbar", "stem", "base")
+    for i in range(len(info)):
+        for j in range(i + 1, len(info)):
+            a, b = info[i], info[j]
+            if not _xz_overlap(a, b):
+                continue
+            a_bot, a_top = float(a.centre[1] - a.half[1]), float(a.centre[1] + a.half[1])
+            b_bot, b_top = float(b.centre[1] - b.half[1]), float(b.centre[1] + b.half[1])
+            upper, lower = (a, b) if a.centre[1] >= b.centre[1] else (b, a)
+            u_bot = a_bot if upper is a else b_bot
+            l_top = a_top if lower is a else b_top
+            penetration = l_top - u_bot
+            if penetration <= 0.0:
+                continue
+            u_height = 2.0 * float(upper.half[1])
+            limit = max(_MAX_PENETRATION, 0.25 * u_height)
+            if penetration <= limit:
+                continue
+            if lower.role in skip_lower:
+                continue
+            # A part mostly *swallowed* by the other is advisory-flag
+            # territory (accidental interpenetration), not a join to clamp.
+            lo = np.maximum(a.centre - a.half, b.centre - b.half)
+            hi = np.minimum(a.centre + a.half, b.centre + b.half)
+            span = hi - lo
+            if np.all(span > 0):
+                overlap = float(np.prod(span))
+                v_small = min(float(np.prod(2.0 * a.half)),
+                              float(np.prod(2.0 * b.half)))
+                if v_small > 0.0 and overlap >= 0.50 * v_small:
+                    continue
+            pa = spec.primitives[upper.index]
+            pb = spec.primitives[lower.index]
+            if (pa.params or {}).get("role") == "subtract" or \
+               (pb.params or {}).get("role") == "subtract":
+                continue
+            lift = penetration - _WELD_EMBED
+            T = pa.transform_matrix()
+            T[1, 3] += float(lift)
+            pa.transform = T.tolist()
+            warnings.append(
+                f"integrity (intrusion): {upper.label or upper.kind!r} sank "
+                f"{penetration * 1000:.0f}mm into {lower.label or lower.kind!r} "
+                f"→ lifted {lift * 1000:.0f}mm"
+            )
+            info[:] = _summary(spec.primitives)
+
+
+def assembly_report(spec: GenerationSpec) -> dict:
+    """Structural health snapshot for tests and diagnostics.
+
+    Returns:
+      - ``floating``: labels of parts with no contact-chain path to ground,
+      - ``max_join_gap``: largest AABB gap (m) between each part and its
+        nearest neighbour (0 for one-part specs),
+      - ``deep_intrusions``: [(upper, lower, penetration_m)] exceeding the
+        idiomatic join limit,
+      - ``n_parts``: structural part count (cutters excluded).
+    """
+    info = _summary(spec.primitives)
+    floating = [p.label or p.kind for p in _floating_parts(spec, info)]
+    max_gap = 0.0
+    for i in range(len(info)):
+        gaps = [_euclidean_min_gap(info[i], info[j])
+                for j in range(len(info)) if j != i]
+        if gaps:
+            max_gap = max(max_gap, min(gaps))
+    intrusions = []
+    for i in range(len(info)):
+        for j in range(i + 1, len(info)):
+            a, b = info[i], info[j]
+            if not _xz_overlap(a, b):
+                continue
+            upper, lower = (a, b) if a.centre[1] >= b.centre[1] else (b, a)
+            u_bot = float(upper.centre[1] - upper.half[1])
+            l_top = float(lower.centre[1] + lower.half[1])
+            pen = l_top - u_bot
+            limit = max(_MAX_PENETRATION, 0.25 * 2.0 * float(upper.half[1]))
+            if pen > limit and lower.role not in ("leg", "vbar", "stem", "base"):
+                intrusions.append((upper.label or upper.kind,
+                                   lower.label or lower.kind, pen))
+    return {
+        "floating": floating,
+        "max_join_gap": float(max_gap),
+        "deep_intrusions": intrusions,
+        "n_parts": len(info),
+    }
+
+
 # ---------------------------------------------------------------- entry point
 
 
@@ -674,8 +1120,18 @@ def check_and_fix(spec: GenerationSpec) -> tuple[GenerationSpec, list[str]]:
         # we recognise.
         _repair_framework(spec, info, warnings)
 
+    # Truth tables: real-world surface heights, vessel neck/belly ratio,
+    # capital orientation — auto-corrected with warnings.
+    _repair_truth_tables(spec, info, warnings)
+
     # Final pass: anything still floating > 5 cm gets pulled to its neighbour.
     _connectivity_sweep(spec, info, warnings)
+
+    # Attachment solver: weld every remaining floater onto the grounded
+    # component (vertical drop preferred, nearest pull as fallback), then
+    # clamp join intrusion to the idiomatic 1–2 mm weld.
+    _solve_attachments(spec, info, warnings)
+    _clamp_vertical_intrusion(spec, info, warnings)
 
     # Advisory only: flag parts that look accidentally swallowed by others.
     _flag_interpenetration(spec, info, warnings)

@@ -1,0 +1,133 @@
+{
+  "schema": "iemodel/3",
+  "name": "vase",
+  "generator": "ironengine-3d-creator 0.2.0",
+  "created_utc": "2026-07-24T02:02:38.163537+00:00",
+  "units": "meters",
+  "up_axis": "Y",
+  "aabb_min": [
+    -0.06999990344047546,
+    0.0,
+    -0.06999996304512024
+  ],
+  "aabb_max": [
+    0.06999978423118591,
+    0.15000000596046448,
+    0.07000000029802322
+  ],
+  "bbox_size": [
+    0.13999968767166138,
+    0.15000000596046448,
+    0.13999996334314346
+  ],
+  "shape": "vase",
+  "material": {
+    "name": "ceramic",
+    "albedo": [
+      0.39988270789384844,
+      0.6997947161316872,
+      0.9849775819301605
+    ],
+    "roughness": 0.18,
+    "metallic": 0.0
+  },
+  "materials": {
+    "ceramic": {
+      "albedo": [
+        0.39988270789384844,
+        0.6997947161316872,
+        0.9849775819301605
+      ],
+      "roughness": 0.18,
+      "metallic": 0.0,
+      "density_kg_m3": 2400.0,
+      "friction": 0.55,
+      "restitution": 0.35
+    }
+  },
+  "parts": [
+    {
+      "label": "vessel",
+      "primitive": "cylinder",
+      "material": "ceramic",
+      "aabb_min": [
+        -0.06999990344047546,
+        0.0,
+        -0.06999996304512024
+      ],
+      "aabb_max": [
+        0.06999978423118591,
+        0.15000000596046448,
+        0.07000000029802322
+      ],
+      "solid_volume_m3": 0.0023090706003884983
+    }
+  ],
+  "physics": {
+    "density_kg_m3": 2400.0,
+    "friction": 0.55,
+    "restitution": 0.35,
+    "collider": "convex",
+    "dynamic": true,
+    "solid_volume_m3": 0.0023090706003884983,
+    "mass_kg": 1.0946012521861255,
+    "body_type": "frangible"
+  },
+  "mesh": null,
+  "point_cloud": null,
+  "spec": {
+    "shape": "vase",
+    "n_points": 5000,
+    "bbox_size": [
+      0.14,
+      0.15,
+      0.14
+    ],
+    "primitives": [
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.07,
+          "height": 0.15,
+          "material": "ceramic"
+        },
+        "label": "vessel"
+      }
+    ],
+    "features": [],
+    "color": null,
+    "seed": 3
+  },
+  "fracture": {
+    "threshold_impulse": 7.5,
+    "fragment_count": 40,
+    "pattern": "voronoi",
+    "debris_material": "ceramic"
+  }
+}

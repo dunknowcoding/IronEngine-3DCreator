@@ -38,6 +38,8 @@ FEATURE_KINDS = (
     "ridges",
     "holes",
     "fur",
+    "relief",
+    "asperity",
 )
 
 SHAPE_KINDS = (

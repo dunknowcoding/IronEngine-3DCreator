@@ -1,0 +1,54 @@
+{
+  "object": "leaf",
+  "canonical_view": "front",
+  "proportion_axis": "length",
+  "license": "CC0-1.0 (hand-authored annotations by IronEngine team)",
+  "parts": [
+    {
+      "name": "blade",
+      "aliases": [
+        "lamina"
+      ],
+      "rel_bbox": [
+        0.1,
+        0.15,
+        0.8,
+        0.75
+      ],
+      "typical_proportion": 0.8,
+      "proportion_of": "length",
+      "notes": "flat ovate blade with margin"
+    },
+    {
+      "name": "petiole",
+      "aliases": [
+        "stalk"
+      ],
+      "rel_bbox": [
+        0.45,
+        0.0,
+        0.1,
+        0.18
+      ],
+      "typical_proportion": 0.18,
+      "proportion_of": "length",
+      "notes": "petiole attaching blade to stem"
+    },
+    {
+      "name": "midrib",
+      "aliases": [
+        "vein",
+        "veins"
+      ],
+      "rel_bbox": [
+        0.47,
+        0.15,
+        0.06,
+        0.7
+      ],
+      "typical_proportion": 0.7,
+      "proportion_of": "length",
+      "notes": "central midrib with branching veins"
+    }
+  ]
+}

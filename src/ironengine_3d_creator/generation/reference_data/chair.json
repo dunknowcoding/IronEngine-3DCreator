@@ -1,0 +1,83 @@
+{
+  "object": "chair",
+  "canonical_view": "side",
+  "proportion_axis": "height",
+  "license": "CC0-1.0 (hand-authored annotations by IronEngine team)",
+  "parts": [
+    {
+      "name": "seat",
+      "aliases": [],
+      "rel_bbox": [
+        0.1,
+        0.42,
+        0.7,
+        0.08
+      ],
+      "typical_proportion": 0.08,
+      "proportion_of": "height",
+      "notes": "horizontal seat at ~0.45 height"
+    },
+    {
+      "name": "backrest",
+      "aliases": [
+        "back"
+      ],
+      "rel_bbox": [
+        0.72,
+        0.45,
+        0.14,
+        0.55
+      ],
+      "typical_proportion": 0.55,
+      "proportion_of": "height",
+      "notes": "upright backrest"
+    },
+    {
+      "name": "leg_front",
+      "aliases": [
+        "front_legs"
+      ],
+      "rel_bbox": [
+        0.12,
+        0.0,
+        0.08,
+        0.45
+      ],
+      "typical_proportion": 0.45,
+      "proportion_of": "height",
+      "notes": "front legs"
+    },
+    {
+      "name": "leg_back",
+      "aliases": [
+        "back_legs",
+        "rear_legs"
+      ],
+      "rel_bbox": [
+        0.76,
+        0.0,
+        0.08,
+        0.45
+      ],
+      "typical_proportion": 0.45,
+      "proportion_of": "height",
+      "notes": "rear legs, often continuous with back"
+    },
+    {
+      "name": "stretcher",
+      "aliases": [
+        "rungs",
+        "rung"
+      ],
+      "rel_bbox": [
+        0.12,
+        0.12,
+        0.72,
+        0.06
+      ],
+      "typical_proportion": 0.06,
+      "proportion_of": "height",
+      "notes": "side stretchers between legs"
+    }
+  ]
+}

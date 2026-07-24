@@ -1,0 +1,154 @@
+{
+  "schema": "iemodel/3",
+  "name": "abstract",
+  "generator": "ironengine-3d-creator 0.2.0",
+  "created_utc": "2026-07-24T02:02:38.162543+00:00",
+  "units": "meters",
+  "up_axis": "Y",
+  "aabb_min": [
+    -0.229999378323555,
+    0.0,
+    -0.2998696565628052
+  ],
+  "aabb_max": [
+    0.2299879938364029,
+    0.0,
+    0.29983076453208923
+  ],
+  "bbox_size": [
+    0.4599873721599579,
+    0.0,
+    0.5997004210948944
+  ],
+  "shape": "abstract",
+  "material": {
+    "name": "fabric",
+    "albedo": [
+      0.39997985293716193,
+      0.6999647202789784,
+      0.9850963202118873
+    ],
+    "roughness": 0.9,
+    "metallic": 0.0
+  },
+  "materials": {
+    "fabric": {
+      "albedo": [
+        0.39997985293716193,
+        0.6999647202789784,
+        0.9850963202118873
+      ],
+      "roughness": 0.9,
+      "metallic": 0.0,
+      "density_kg_m3": 300.0,
+      "friction": 0.8,
+      "restitution": 0.05
+    }
+  },
+  "parts": [
+    {
+      "label": "cloth",
+      "primitive": "plane",
+      "material": "fabric",
+      "aabb_min": [
+        -0.229999378323555,
+        0.0,
+        -0.2998696565628052
+      ],
+      "aabb_max": [
+        0.2299879938364029,
+        0.0,
+        0.29983076453208923
+      ],
+      "solid_volume_m3": 0.0
+    }
+  ],
+  "physics": {
+    "density_kg_m3": 300.0,
+    "friction": 0.8,
+    "restitution": 0.05,
+    "collider": "box",
+    "dynamic": true,
+    "solid_volume_m3": 2.7585462078266065e-10,
+    "mass_kg": 0.0966,
+    "body_type": "soft"
+  },
+  "mesh": null,
+  "point_cloud": null,
+  "spec": {
+    "shape": "abstract",
+    "n_points": 4000,
+    "bbox_size": [
+      0.46,
+      0.0008,
+      0.6
+    ],
+    "primitives": [
+      {
+        "kind": "plane",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "size": [
+            0.46,
+            0.6
+          ],
+          "material": "fabric"
+        },
+        "label": "cloth"
+      }
+    ],
+    "features": [],
+    "color": null,
+    "seed": 5
+  },
+  "soft_body": {
+    "kind": "cloth",
+    "resolution": [
+      28,
+      20
+    ],
+    "mass_kg": 0.0966,
+    "stretch_stiffness": 0.8,
+    "bend_stiffness": 0.3,
+    "damping": 0.06,
+    "pin_indices": [
+      0,
+      27,
+      532,
+      559
+    ]
+  },
+  "cloth": {
+    "width_m": 0.46,
+    "height_m": 0.6,
+    "resolution": [
+      28,
+      20
+    ]
+  }
+}

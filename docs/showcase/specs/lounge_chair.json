@@ -1,0 +1,488 @@
+{
+  "spec": {
+    "shape": "chair",
+    "n_points": 40000,
+    "bbox_size": [
+      0.7,
+      1.0,
+      0.7
+    ],
+    "primitives": [
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            -0.27000001072883606
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.15000000596046448
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            -0.24000000953674316
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.028,
+          "height": 0.3,
+          "caps": true,
+          "material": "wood"
+        },
+        "label": "leg_0"
+      },
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.27000001072883606
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.15000000596046448
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            -0.24000000953674316
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.028,
+          "height": 0.3,
+          "caps": true,
+          "material": "wood"
+        },
+        "label": "leg_1"
+      },
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            -0.27000001072883606
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.15000000596046448
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.24000000953674316
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.028,
+          "height": 0.3,
+          "caps": true,
+          "material": "wood"
+        },
+        "label": "leg_2"
+      },
+      {
+        "kind": "cylinder",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.27000001072883606
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.15000000596046448
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.24000000953674316
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radius": 0.028,
+          "height": 0.3,
+          "caps": true,
+          "material": "wood"
+        },
+        "label": "leg_3"
+      },
+      {
+        "kind": "box",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            -0.27
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.27
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "size": [
+            0.04,
+            0.06,
+            0.52
+          ],
+          "material": "wood"
+        },
+        "label": "rail_side_-1"
+      },
+      {
+        "kind": "box",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.27
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.27
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "size": [
+            0.04,
+            0.06,
+            0.52
+          ],
+          "material": "wood"
+        },
+        "label": "rail_side_1"
+      },
+      {
+        "kind": "box",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.27
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.25
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "size": [
+            0.5,
+            0.06,
+            0.04
+          ],
+          "material": "wood"
+        },
+        "label": "rail_front"
+      },
+      {
+        "kind": "panel",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            6.123234262925839e-17,
+            -1.0,
+            0.3175000250339508
+          ],
+          [
+            0.0,
+            1.0,
+            6.123234262925839e-17,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "size": [
+            0.62,
+            0.56
+          ],
+          "thickness": 0.035,
+          "bend": 0.0,
+          "material": "wood"
+        },
+        "label": "seat_deck"
+      },
+      {
+        "kind": "panel",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.9781476007338057,
+            0.20791169081775934,
+            0.62
+          ],
+          [
+            0.0,
+            -0.20791169081775934,
+            0.9781476007338057,
+            -0.315
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "size": [
+            0.62,
+            0.55
+          ],
+          "thickness": 0.035,
+          "bend": 0.0,
+          "material": "wood"
+        },
+        "label": "back_panel"
+      },
+      {
+        "kind": "superellipsoid",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.5333333015441895,
+            0.0,
+            0.3400000035762787
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.009999999776482582
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radii": [
+            0.3,
+            0.075,
+            0.26
+          ],
+          "exponents": [
+            0.45,
+            0.45
+          ],
+          "material": "fabric"
+        },
+        "label": "seat_cushion"
+      },
+      {
+        "kind": "superellipsoid",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.9781476259231567,
+            0.11880667507648468,
+            0.5585089921951294
+          ],
+          [
+            0.0,
+            -0.2079116851091385,
+            0.5589414834976196,
+            -0.1951335370540619
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radii": [
+            0.285,
+            0.22,
+            0.07
+          ],
+          "exponents": [
+            0.5,
+            0.5
+          ],
+          "material": "fabric"
+        },
+        "label": "back_cushion"
+      },
+      {
+        "kind": "superellipsoid",
+        "transform": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.9781476007338057,
+            0.20791169081775934,
+            0.5
+          ],
+          [
+            0.0,
+            -0.20791169081775934,
+            0.9781476007338057,
+            -0.16
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "params": {
+          "radii": [
+            0.16,
+            0.085,
+            0.055
+          ],
+          "exponents": [
+            0.4,
+            0.4
+          ],
+          "material": "fabric"
+        },
+        "label": "lumbar_pillow"
+      }
+    ],
+    "features": [],
+    "color": null,
+    "seed": 7
+  },
+  "warnings": [
+    "validator: 'seat_cushion' seat thickness 0.150m \u2192 clamped to 0.080m (chair proportion guide)",
+    "validator: 'back_cushion' back thickness 0.140m \u2192 clamped to 0.080m (chair proportion guide)",
+    "integrity: 4 legs snapped to seat corners",
+    "integrity: seat 'seat_deck' snapped to leg top",
+    "integrity: seat 'seat_cushion' snapped to leg top",
+    "integrity: back attached to seat rear",
+    "integrity: part 'seat_deck' is 90% inside 'seat_cushion' \u2014 possible accidental interpenetration",
+    "integrity: part 'lumbar_pillow' is 85% inside 'back_cushion' \u2014 possible accidental interpenetration"
+  ]
+}

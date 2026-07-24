@@ -1,0 +1,89 @@
+{
+  "object": "flower_rose",
+  "canonical_view": "side",
+  "proportion_axis": "height",
+  "license": "CC0-1.0 (hand-authored annotations by IronEngine team)",
+  "parts": [
+    {
+      "name": "bloom",
+      "aliases": [
+        "petals",
+        "petal",
+        "corolla",
+        "petal_whorl"
+      ],
+      "rel_bbox": [
+        0.25,
+        0.72,
+        0.5,
+        0.28
+      ],
+      "typical_proportion": 0.28,
+      "proportion_of": "height",
+      "notes": "layered petal whorl, cup-shaped"
+    },
+    {
+      "name": "sepal",
+      "aliases": [
+        "sepals",
+        "calyx"
+      ],
+      "rel_bbox": [
+        0.35,
+        0.62,
+        0.3,
+        0.1
+      ],
+      "typical_proportion": 0.08,
+      "proportion_of": "height",
+      "notes": "green sepals cupping the bloom"
+    },
+    {
+      "name": "stem",
+      "aliases": [
+        "stalk"
+      ],
+      "rel_bbox": [
+        0.45,
+        0.05,
+        0.1,
+        0.6
+      ],
+      "typical_proportion": 0.6,
+      "proportion_of": "height",
+      "notes": "slender upright stem"
+    },
+    {
+      "name": "thorn",
+      "aliases": [
+        "thorns",
+        "prickle",
+        "prickles"
+      ],
+      "rel_bbox": [
+        0.4,
+        0.25,
+        0.2,
+        0.25
+      ],
+      "typical_proportion": 0.03,
+      "proportion_of": "height",
+      "notes": "small prickles along stem"
+    },
+    {
+      "name": "leaf",
+      "aliases": [
+        "leaves"
+      ],
+      "rel_bbox": [
+        0.2,
+        0.3,
+        0.6,
+        0.2
+      ],
+      "typical_proportion": 0.15,
+      "proportion_of": "height",
+      "notes": "serrated compound leaves on side shoots"
+    }
+  ]
+}

@@ -139,3 +139,62 @@ def shape_default_material(shape: str, primitive_label: str | None) -> str | Non
         "lamp": "metal", "creature": "organic", "tree": "wood",
         "rock": "stone", "vehicle": "metal", "abstract": None,
     }.get(s)
+
+
+# ---------------------------------------------------------------------------
+# Tileable PNG texture maps (CR_Textures bridge)
+# ---------------------------------------------------------------------------
+#
+# The functions above colour *point clouds* per-point. For mesh exports we
+# instead bake surface richness into tileable image maps (zero geometric
+# cost): `generation.texture_maps` renders the PNG maps and
+# `generation.texture_apply` samples them at analytic-mesh UVs. The table
+# below connects the LLM's per-primitive `material` hints to map kinds so a
+# spec's material names "just work" with the image-map pipeline.
+
+MAP_KIND_BY_MATERIAL: dict[str, str] = {
+    "wood": "wood_oak",
+    "stone": "granite",
+    "fabric": "linen",
+    "metal": "brushed_metal",
+    "iron": "brushed_metal",
+    "leather": "leather",
+    "ceramic": "marble",
+    "porcelain": "marble",
+    "organic": "leather",
+    "foliage": "grass",
+    "brick": "brick",
+    "plastic": "concrete",
+    "glass": "marble",
+}
+
+
+def map_kind_for_material(material: str | None, *, wood: str = "wood_oak") -> str | None:
+    """Resolve a material hint to a `texture_maps` kind (None if unmappable).
+
+    `wood` selects the lumber variant for the generic "wood" hint
+    ("wood_oak" or "wood_walnut").
+    """
+    if not material:
+        return None
+    key = material.strip().lower()
+    kind = MAP_KIND_BY_MATERIAL.get(key)
+    if kind == "wood_oak":
+        return wood
+    return kind
+
+
+def maps_for_material(
+    material: str | None,
+    *,
+    size: int = 512,
+    seed: int = 0,
+    wood: str = "wood_oak",
+) -> dict[str, "np.ndarray"] | None:
+    """Generate tileable channel maps for a material hint (None if unknown)."""
+    from .texture_maps import generate_maps
+
+    kind = map_kind_for_material(material, wood=wood)
+    if kind is None:
+        return None
+    return generate_maps(kind, size=size, seed=seed)
