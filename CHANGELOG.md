@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+People, buildings, vehicles, and landscapes: the seeded generator now covers humans (face, hair, clothes), building interiors, articulated vehicles, parametric flora, terrain styles, and water containers — plus a multi-view QA audit, a degenerate-face cleanup pass, and a per-part tint hook. 894 tests.
+
+- **Human anatomy** (`generation/human_anatomy.py`): parametric human builder with a modeled face, proportioned skeleton, and skinned body parts — plus **hair** (`generation/hair.py`) with 8 hairstyles (`bald`, `buzz`, `curly`, `twin_ponytails`, `slicked`, `horseshoe`, `long_straight`, `bob`) and wind-response strand metadata, and **clothing** (`generation/clothing.py`) for dressed figures.
+- **Building interiors** (`generation/building_arch.py`, `generation/doors.py`, `generation/slicer.py`): multi-room floor plans, hinged doors with swing states, and a slice view that cuts a horizontal section through a building for inspection.
+- **Vehicle design** (`generation/vehicle_design.py`): 6 parametric vehicle classes (`sedan`, `hatchback`, `suv`, `sports`, `pickup`, `van`) with real-world dimensions, hinged doors with open/close assembly states, and modeled interiors (seats, dash, wheel) — baked to ordinary analytic parts on export.
+- **Flora parameters** (`generation/flora_params.py`): user-facing dials for density, season, and age on top of the plant grammar.
+- **Terrain styles** (`generation/terrain_styles.py`): 7 stone-forward ground pieces (`boulder_field`, `rock_strata_cliff`, `cobblestone_patch`, `cracked_mud`, `mossy_stones`, `pebble_riverbed`, `stone_slab_pavement`), tileable where sensible.
+- **Water containers** (`generation/water.py`): vessels with an editable fluid body — an `extras.fluid` block in the `iemodel/3` manifest carries the fluid properties a simulator consumes.
+- **Multi-view QA** (`generation/multiview.py`): full audit over 6 canonical orthographic views plus 2 deterministic 3/4 perspective views — silhouette boundary completeness (winding-sign contour closure), welded-topology open-edge detection, internal detail density, bounding-box scale sanity, per-part visibility, and per-view reference comparison against the corpus (with an LLM-generated-reference fallback, provenance recorded).
+- **`weld_mesh` zero-area cleanup** (`generation/analytic_mesh.py`): dedupes corners that agree on position + normal + uv and drops exactly-zero-area faces, driving the degenerate-face count to 0 instead of letting them poison QA.
+- **Per-part tint hook** (`generation/compositor.py`): an optional `params["color"]` (or `extras.color` / `extras.tint`) override blended over the material/label base color with a default blend strength — backward compatible when absent.
+- **12 new style families** (~30 total): `human`, `building`, `vehicle`, `flora_param`, `water_container`, and the 7 terrain styles join the seeded offline engine.
+- Tests: 15 new suites (`test_human_anatomy`, `test_human_hair`, `test_human_clothing`, `test_building_arch`, `test_building_doors`, `test_building_slice`, `test_vehicle_design`, `test_vehicle_articulation`, `test_florawater`, `test_multiview`, `test_degenerate_faces`, `test_part_tint`, `test_integrated_families`, …) bringing the total to 894.
+
 ## 0.3.0
 
 Complex geometry, style engine v2, texture generators, reference validation, provider fallback, soft authoring, and a showcase README.

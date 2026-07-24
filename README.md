@@ -65,9 +65,9 @@ The limits of both paths are documented honestly in [Honest limitations](#honest
 
 Grounding, attachment, spacing, and framework repairs run after parsing, and they are not shy: the garden gate's render exists because `integrity (framework): snapped 9 vertical members between rails`; the arched chair's legs were `snapped to seat corners` and its back `attached to seat rear`. The validator enforces proportion guides too — the lounge chair's cushions were clamped from 0.15 m to 0.08 m because chairs don't have mattress-thick seats. Every one of these interventions is printed as a warning and preserved in the spec JSONs.
 
-### 14 style families, fully seeded
+### 30 style families, fully seeded
 
-When no LLM is configured — or the provider fails — the pipeline falls back to a seeded style engine with **14 families**: `abstract`, `architecture`, `creature`, `desktop_computer`, `furniture`, `futurist_chair`, `mechanical`, `modern_luxury`, `neoclassical_column`, `plant`, `robot`, `rococo_fence`, `spaceship`, and `vessel`. The seed grid above auditions 9 seeds across 8 of those families; same seed, same object, every time.
+When no LLM is configured — or the provider fails — the pipeline falls back to a seeded style engine with **30 families**: furniture, architecture, mechanical, creature, robot, spaceship, and vessels at one end; humans (face, 8 hairstyles, clothing), buildings with interiors and hinged doors, 6 vehicle classes, parametric flora (density / season / age), 7 terrain styles, and water containers with fluid metadata at the other. The seed grid above auditions 9 seeds across 8 of those families; same seed, same object, every time.
 
 ### Soft, frangible, and articulated authoring
 
@@ -149,7 +149,8 @@ Captured from the local app flow in the `IronEngineWorld` Conda environment usin
 | Generation | Produces 3D point clouds from text prompts or auto templates |
 | Integrity | Repairs grounding, adjacency, symmetry, and framework alignment |
 | Geometry | 15 primitive kinds: `box`, `sphere`, `cylinder`, `capsule`, `cone`, `torus`, `ellipsoid`, `prism`, `helix`, `plane`, `superellipsoid`, `tube`, `sweep`, `arch`, `panel`, plus two-level subtraction |
-| Style engine | 14 seeded families for offline/fallback generation |
+| Style engine | 30 seeded families for offline/fallback generation — humans, buildings, vehicles, flora, terrain, water, and the classic object families |
+| QA | Multi-view audit (8 projections: silhouette completeness, open-edge detection, detail density, scale sanity, part visibility, reference comparison) |
 | Surface detail | Applies features such as `scratch`, `curve_pattern`, `bump_field`, `dent`, `erosion`, `ridges`, `holes`, and `fur` |
 | Rendering | Shows points, mesh, or both with textured and plain color modes |
 | Export | Writes `PLY`, `PCD`, `GLB` (PBR, per-part), and `OBJ`+`MTL`, plus an `iemodel/2` manifest with per-part materials and physics (mass, solid volume, colliders); `iemodel/3` extras add soft-body, fracture, and articulation blocks |
