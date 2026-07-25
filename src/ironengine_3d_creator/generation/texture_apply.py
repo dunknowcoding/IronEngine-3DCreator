@@ -156,6 +156,84 @@ def apply_maps_to_parts(
 
 
 # ---------------------------------------------------------------------------
+# map attachment (CR_TexReal image-map export path)
+# ---------------------------------------------------------------------------
+#
+# ``apply_maps_to_part`` *samples* maps into per-vertex colours (the baked
+# path). ``attach_maps_to_part`` instead hands the full-resolution maps to
+# the GLB exporter by setting three duck-typed attributes on the part:
+#
+# - ``part.maps``      — channel dict from ``texture_maps.generate_maps``
+#                        (``albedo`` required; ``bump``/``normal`` optional);
+# - ``part.uv_scale``  — tile repeats across the part's UVs (exporter scales
+#                        TEXCOORD_0, samplers wrap = repeat);
+# - ``part.tint``      — optional (r, g, b) multiplicative tint exported as
+#                        baseColorFactor + COLOR_0 so the texture still shows
+#                        unmodulated (renderers multiply vertex colour ×
+#                        texture; white keeps the map as authored).
+#
+# Parts without ``.maps`` keep the stock vertex-colour bake path untouched.
+
+
+def attach_maps_to_part(
+    part,
+    maps: Mapping[str, np.ndarray],
+    *,
+    uv_scale: tuple[float, float] = (1.0, 1.0),
+    tint: tuple[float, float, float] | None = None,
+):
+    """Attach full-resolution channel maps to a part for image-map GLB export.
+
+    Returns the part (attributes are set in place; `AnalyticPart`/`BuiltPart`
+    are plain dataclasses, so dynamic attributes are legal). Raises KeyError
+    if the channel dict has no ``albedo``.
+    """
+    if maps.get("albedo") is None:
+        raise KeyError("maps must contain an 'albedo' channel")
+    part.maps = maps
+    part.uv_scale = (float(uv_scale[0]), float(uv_scale[1]))
+    if tint is not None:
+        t = np.asarray(tint, dtype=np.float32).reshape(3)
+        part.tint = tuple(float(c) for c in np.clip(t, 0.0, 1.0))
+    return part
+
+
+def attach_maps_to_parts(
+    parts: Sequence,
+    assignments: Mapping[str, str | Mapping[str, np.ndarray]],
+    *,
+    size: int = 512,
+    seed: int = 0,
+    uv_scale: tuple[float, float] | Mapping[str, tuple[float, float]] = (1.0, 1.0),
+    tints: Mapping[str, tuple[float, float, float]] | None = None,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Attach maps to every part by label (``apply_maps_to_parts`` conventions).
+
+    ``assignments`` maps a part label to a texture-kind name or a ready
+    channel dict; ``"*"`` is the wildcard. Parts with no assignment are left
+    untouched (vertex-colour bake path). Returns ``{kind: channel_dict}`` for
+    the kinds that were generated (same kind shared across parts reuses one
+    cached map set).
+    """
+    generated: dict[str, dict[str, np.ndarray]] = {}
+    for i, part in enumerate(parts):
+        label = part.label or f"part_{i}"
+        spec = assignments.get(label) or assignments.get("*")
+        if spec is None:
+            continue
+        if isinstance(spec, str):
+            if spec not in generated:
+                generated[spec] = generate_maps(spec, size=size, seed=seed)
+            maps = generated[spec]
+        else:
+            maps = spec
+        scale = uv_scale.get(label, (1.0, 1.0)) if isinstance(uv_scale, Mapping) else uv_scale
+        tint = tints.get(label) if tints else None
+        attach_maps_to_part(part, maps, uv_scale=scale, tint=tint)
+    return generated
+
+
+# ---------------------------------------------------------------------------
 # manifest block (ietexture/1)
 # ---------------------------------------------------------------------------
 

@@ -166,6 +166,15 @@ MAP_KIND_BY_MATERIAL: dict[str, str] = {
     "brick": "brick",
     "plastic": "concrete",
     "glass": "marble",
+    # CR_TexReal
+    "camo": "woodland_camo",
+    "skin": "skin",
+    "wool": "knit_wool",
+    "knit": "knit_wool",
+    "plaster": "plaster_wall",
+    "snow": "snow",
+    "mud": "mud",
+    "chainmail": "chainmail",
 }
 
 

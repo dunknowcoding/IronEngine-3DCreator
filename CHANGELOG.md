@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased (CR_TexReal)
+
+Real-world textures and mesh refinement: models can now ship real image maps
+(albedo + bump-derived normal) embedded in the GLB instead of vertex colours
+only, and hero assets get a crease-aware subdivision + displacement pass so
+they stop looking like stacked low-poly shapes. 971 tests.
+
+- **8 new procedural texture kinds** (`generation/texture_maps.py`):
+  `woodland_camo` / `desert_camo` (soft multi-colour blotches), `skin`
+  (pores, freckles, red/yellow mottling; mid-tone-centred so the tint hook
+  shifts the tone), `knit_wool` (V-stitch chevron rows), `plaster_wall`
+  (trowel sweeps), `snow` (drift shading + sparkle glints), `mud` (wet/dry
+  blotches, crust cracks, grit), `chainmail` (interlocking ring weave for
+  fantasy armour) — plus the `knit` and `rusted_metal` aliases. All tileable,
+  seeded-deterministic, and under the 200 ms budget at 512 px; the existing
+  per-kind contract tests cover them automatically. `denim`, `leather`,
+  `brushed_metal`, `concrete` and `rust` already existed.
+- **Image-map GLB export path** (`core/exporter.py`,
+  `generation/texture_apply.py`): parts can now carry full-resolution
+  channel maps — attach with `texture_apply.attach_maps_to_part(part, maps,
+  uv_scale=..., tint=...)` / `attach_maps_to_parts(...)` (same label/wildcard
+  conventions as `apply_maps_to_parts`). The exporter embeds the albedo
+  (≤1024 px) as `baseColorTexture` with the part's real UVs (scaled by
+  `uv_scale`, wrap=repeat) and derives a tangent-space `normalTexture` from
+  the bump channel. The per-part tint hook is honoured on `COLOR_0` (white by
+  default) so the texture is never double-modulated; parts without maps keep
+  the baked vertex-colour path byte-for-byte. Verified end-to-end: the GLB
+  re-loads through IronEngine-BonaFide with the texture bound.
+- **Post-refinement** (`generation/refine.py`, new):
+  `refine_mesh(mesh, levels, crease_deg, displacement=None, tri_budget=...)`
+  — midpoint 1-to-4 subdivision with Loop-lite repositioning that preserves
+  hard edges (dihedral-angle crease detection; crease vertices follow the
+  Loop crease rule on straight creases and are pinned at sharp turns, so a
+  crate keeps its volume exactly), optional volume-neutral Taubin smoothing,
+  and procedural displacement along recomputed normals (callable / height
+  array / `bump_displacement(kind, scale)` sampling a `texture_maps` bump
+  channel at the part UVs, seeded-deterministic). Guardrails: `tri_budget`
+  clamps the applied level and every result passes through `weld_mesh`
+  degenerate-face cleanup. `refine_part` preserves `AnalyticPart` metadata.
+- **Garment upgrade hook** (`generation/refine.py`): `refine_garment(parts,
+  thickness=..., weave=...)` solidifies open cloth shells into closed
+  two-sided garments with real thickness (inner offset + stitched boundary
+  walls), optionally subdivides/displaces them, and attaches the weave
+  texture maps for the image-map export path. Non-cloth parts pass through
+  untouched.
+- Tests: new suites `test_refine.py` (subdivision contracts, hard-edge and
+  volume preservation, budgets, displacement determinism, solidify/garment
+  hooks) and `test_texreal.py` (kind semantics, attach conventions, GLB
+  map-path contracts, BonaFide round-trip), bringing the total to 971.
+
 ## 0.4.0
 
 People, buildings, vehicles, and landscapes: the seeded generator now covers humans (face, hair, clothes), building interiors, articulated vehicles, parametric flora, terrain styles, and water containers — plus a multi-view QA audit, a degenerate-face cleanup pass, and a per-part tint hook. 894 tests.

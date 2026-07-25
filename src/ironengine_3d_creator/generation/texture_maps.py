@@ -427,6 +427,192 @@ def scifi_panel(size: int, seed: int) -> dict[str, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
+# CR_TexReal: camo / organic / fabric / masonry generators
+# ---------------------------------------------------------------------------
+
+
+def _camo(size: int, seed: int, palette: list[tuple]) -> dict[str, np.ndarray]:
+    """Blotch camouflage: K smooth noise fields, one per palette colour.
+
+    Each pixel takes the colour of its strongest field; where the top two
+    fields are close the colours blend, giving organic soft-edged blotches.
+    All fields are wrapping fbm, so the pattern tiles exactly.
+    """
+    rng = np.random.default_rng(seed)
+    fields = np.stack([_fbm(size, 3, 4, rng) for _ in palette], axis=0)
+    order = np.argsort(-fields, axis=0)
+    top = np.take_along_axis(fields, order[:1], axis=0)[0]
+    second = np.take_along_axis(fields, order[1:2], axis=0)[0]
+    winner = order[0]
+    pal = np.asarray(palette, dtype=np.float32)
+    blend = np.clip((top - second) / 0.12, 0.0, 1.0)[..., None]
+    col = pal[order[1]] * (1.0 - blend) + pal[winner] * blend
+    grain = _fbm(size, 28, 2, rng)[..., None]
+    col = col * (0.90 + 0.20 * grain)
+    return {
+        "albedo": _u8(col),
+        "bump": _u8(np.clip(0.48 + 0.20 * (grain[..., 0] - 0.5), 0, 1)),
+        "roughness": _u8(np.full((size, size), 0.88, dtype=np.float32)),
+    }
+
+
+def woodland_camo(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Temperate woodland camo: green/olive/brown/black soft blotches."""
+    return _camo(size, seed, [
+        (0.30, 0.34, 0.16),   # olive
+        (0.15, 0.19, 0.09),   # dark green
+        (0.29, 0.21, 0.11),   # earth brown
+        (0.09, 0.09, 0.07),   # near-black
+    ])
+
+
+def desert_camo(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Arid desert camo: sand/tan/pale blotches."""
+    return _camo(size, seed, [
+        (0.74, 0.64, 0.44),   # sand
+        (0.60, 0.48, 0.30),   # tan
+        (0.83, 0.77, 0.61),   # pale khaki
+        (0.44, 0.33, 0.19),   # umber
+    ])
+
+
+def skin(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Skin with pores, freckles and red/yellow mottling.
+
+    The albedo is centred on a mid tone and the variation is multiplicative-
+    friendly: exporters shift the tone lighter/darker via the base-colour
+    factor (the per-part tint hook) without regenerating the map.
+    """
+    rng = np.random.default_rng(seed)
+    mottle = _fbm(size, 6, 4, rng)                    # large tonal patches
+    fine = _fbm(size, 24, 3, rng)                     # pore field
+    pores = np.clip((fine - 0.68) / 0.10, 0.0, 1.0)   # soft pore dots
+    freck_field = _periodic_value_noise(size, 20, 20, rng)
+    freckles = np.clip((freck_field - 0.80) / 0.07, 0.0, 1.0)
+    r = 0.80 + 0.10 * (mottle - 0.5) - 0.05 * pores - 0.16 * freckles
+    g = 0.60 + 0.08 * (mottle - 0.5) - 0.06 * pores - 0.12 * freckles
+    b = 0.48 + 0.06 * (mottle - 0.5) - 0.06 * pores - 0.08 * freckles
+    albedo = _rgb(r, g, b)
+    bump = _u8(np.clip(0.50 + 0.25 * (fine - 0.5) - 0.30 * pores, 0, 1))
+    rough = _u8(np.clip(0.55 + 0.15 * (mottle - 0.5), 0, 1))
+    return {"albedo": albedo, "bump": bump, "roughness": rough}
+
+
+def knit_wool(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Knitted wool: V-stitch chevron rows + fuzzy fibre variation."""
+    rng = np.random.default_rng(seed)
+    f = 24  # stitch columns per tile (integer -> tileable)
+    u, v = _grids(size)
+    d1 = 0.5 + 0.5 * np.sin(TAU * f * (0.5 * u + v))
+    d2 = 0.5 + 0.5 * np.sin(TAU * f * (-0.5 * u + v))
+    chevron = np.maximum(d1, d2)                       # crossing V strands
+    fuzz = _aniso_noise(size, f, 6, rng, octaves=2)
+    tone = 0.74 + 0.16 * chevron + 0.10 * (fuzz - 0.5)
+    albedo = _rgb(tone, tone * 0.96, tone * 0.88)
+    bump = _u8(np.clip(0.25 + 0.55 * chevron + 0.12 * (fuzz - 0.5), 0, 1))
+    rough = _u8(np.full((size, size), 0.95, dtype=np.float32))
+    return {"albedo": albedo, "bump": bump, "roughness": rough}
+
+
+def plaster_wall(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Interior plaster: trowel-sweep ridges, faint stains, fine grain."""
+    rng = np.random.default_rng(seed)
+    ridged = 1.0 - np.abs(2.0 * _fbm(size, 4, 3, rng) - 1.0)
+    sweeps = ridged ** 2                                # soft trowel arcs
+    grain = _fbm(size, 30, 2, rng)
+    stains = np.clip((_fbm(size, 2, 2, rng) - 0.60) / 0.15, 0.0, 1.0)
+    tone = 0.87 + 0.05 * (sweeps - 0.5) + 0.03 * (grain - 0.5) - 0.06 * stains
+    albedo = _rgb(tone, tone * 0.985, tone * 0.945)
+    bump = _u8(np.clip(0.50 + 0.30 * (sweeps - 0.5) + 0.12 * (grain - 0.5), 0, 1))
+    rough = _u8(np.full((size, size), 0.92, dtype=np.float32))
+    return {"albedo": albedo, "bump": bump, "roughness": rough}
+
+
+def snow(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Fresh snow: soft drift shading, blue-tinged dips, glinting sparkle."""
+    rng = np.random.default_rng(seed)
+    drifts = _fbm(size, 4, 3, rng)
+    fine = _fbm(size, 18, 2, rng)
+    sparkle_field = _periodic_value_noise(size, 64, 64, rng)
+    sparkle = np.clip((sparkle_field - 0.975) / 0.015, 0.0, 1.0)  # sparse glints
+    shade = 0.90 + 0.10 * drifts + 0.03 * (fine - 0.5)
+    r = np.clip(shade - 0.03 * (1.0 - drifts) + 0.35 * sparkle, 0, 1)
+    g = np.clip(shade - 0.01 * (1.0 - drifts) + 0.35 * sparkle, 0, 1)
+    b = np.clip(shade + 0.03 * (1.0 - drifts) + 0.35 * sparkle, 0, 1)
+    albedo = _rgb(r, g, b)
+    bump = _u8(np.clip(0.45 + 0.45 * drifts + 0.10 * (fine - 0.5), 0, 1))
+    rough = _u8(np.clip(0.60 - 0.45 * sparkle + 0.10 * (fine - 0.5), 0, 1))
+    return {"albedo": albedo, "bump": bump, "roughness": rough}
+
+
+def mud(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Wet mud: dark saturated blotches, drying crust cracks, small grit."""
+    rng = np.random.default_rng(seed)
+    blotch = _fbm(size, 4, 4, rng)
+    wet = np.clip((blotch - 0.45) / 0.20, 0.0, 1.0)
+    wet = wet * wet * (3.0 - 2.0 * wet)
+    ridged = 1.0 - np.abs(2.0 * _fbm(size, 7, 3, rng) - 1.0)
+    cracks = np.clip((ridged - 0.90) / 0.05, 0.0, 1.0) * (1.0 - wet)
+    grit_field = _periodic_value_noise(size, 48, 48, rng)
+    grit = np.clip((grit_field - 0.90) / 0.05, 0.0, 1.0)
+    dark = np.array([0.16, 0.11, 0.07], dtype=np.float32)     # wet mud
+    light = np.array([0.42, 0.32, 0.21], dtype=np.float32)    # drying crust
+    col = light[None, None, :] * (1.0 - wet[..., None]) + dark[None, None, :] * wet[..., None]
+    col = col * (1.0 - 0.45 * cracks[..., None]) + 0.20 * grit[..., None]
+    albedo = _u8(col)
+    bump = _u8(np.clip(0.45 + 0.25 * (blotch - 0.5) - 0.40 * cracks + 0.25 * grit, 0, 1))
+    rough = _u8(np.clip(0.95 - 0.45 * wet, 0, 1))
+    return {"albedo": albedo, "bump": bump, "roughness": rough}
+
+
+def chainmail(size: int, seed: int) -> dict[str, np.ndarray]:
+    """Interlocking ringmail weave for fantasy armour.
+
+    Two half-offset ring sub-lattices (even/odd rows); every pixel measures
+    its wrapped distance to the nearest ring centres, so the annulus pattern
+    tiles exactly. Gaps between rings fall to deep shadow.
+    """
+    rng = np.random.default_rng(seed)
+    cols = rows = 16
+    u, v = _grids(size)
+    cu = u * cols
+    cv = v * rows
+    iu = np.floor(cu)
+    iv = np.floor(cv)
+
+    def _nearest_d2(x_off: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        best = np.full((size, size), np.inf, dtype=np.float32)
+        bi = np.zeros((size, size), dtype=np.int64)
+        bj = np.zeros((size, size), dtype=np.int64)
+        for du in (-1, 0, 1):
+            for dv in (-1, 0, 1):
+                dx = cu - (iu + du + 0.5 + x_off)
+                dy = cv - (iv + dv + 0.5)
+                d2 = dx * dx + dy * dy
+                m = d2 < best
+                best = np.where(m, d2, best)
+                bi = np.where(m, (iu + du).astype(np.int64), bi)
+                bj = np.where(m, (iv + dv).astype(np.int64), bj)
+        return best, bi, bj
+
+    d2a, ia, ja = _nearest_d2(0.0)          # even rows
+    d2b, ib, jb = _nearest_d2(0.5)          # odd rows, half-offset
+    use_a = d2a <= d2b
+    dist = np.sqrt(np.where(use_a, d2a, d2b))
+    ring_i = np.where(use_a, ia, ib)
+    ring_j = np.where(use_a, ja, jb)
+    annulus = np.exp(-(((dist - 0.34) / 0.10) ** 2))   # bright ring band
+    tint = 0.80 + 0.35 * _hash01(ring_i % cols, ring_j % rows, seed)
+    sheen = _fbm(size, 6, 2, rng)
+    bright = annulus * tint * (0.50 + 0.25 * (sheen - 0.5))
+    tone = 0.10 + 0.55 * bright
+    albedo = _rgb(tone * 0.98, tone, tone * 1.06)
+    bump = _u8(np.clip(0.12 + 0.75 * annulus, 0, 1))
+    rough = _u8(np.clip(0.68 - 0.38 * annulus, 0, 1))
+    return {"albedo": albedo, "bump": bump, "roughness": rough}
+
+
+# ---------------------------------------------------------------------------
 # registry + public API
 # ---------------------------------------------------------------------------
 
@@ -446,6 +632,17 @@ TEXTURE_GENERATORS = {
     "concrete": concrete,
     "rococo_ornament": rococo_ornament,
     "scifi_panel": scifi_panel,
+    # CR_TexReal
+    "woodland_camo": woodland_camo,
+    "desert_camo": desert_camo,
+    "skin": skin,
+    "knit_wool": knit_wool,
+    "knit": knit_wool,             # alias
+    "plaster_wall": plaster_wall,
+    "snow": snow,
+    "mud": mud,
+    "chainmail": chainmail,
+    "rusted_metal": rust,          # alias: rusted steel IS the rust kind
 }
 
 

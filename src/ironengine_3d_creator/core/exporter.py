@@ -257,6 +257,56 @@ def _bake_uv_texture(uvs: np.ndarray, colors: np.ndarray, size: int):
     return Image.fromarray(img, "RGB")
 
 
+_MAP_MAX_SIZE = 1024
+
+
+def _bump_to_normal_u8(bump: np.ndarray, strength: float = 2.0) -> np.ndarray:
+    """Tangent-space normal map (u8 RGB) from a height map via wrapping
+    central differences — same convention as texture_apply.bake_detail_to_texture."""
+    h = np.asarray(bump, dtype=np.float32) / 255.0
+    gx = (np.roll(h, -1, axis=1) - np.roll(h, 1, axis=1)) * 0.5
+    gy = (np.roll(h, -1, axis=0) - np.roll(h, 1, axis=0)) * 0.5
+    nz = np.ones_like(h) / max(float(strength), 1e-6)
+    n = np.stack([-gx, -gy, nz], axis=-1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True) + 1e-12
+    return np.clip(np.round((n * 0.5 + 0.5) * 255.0), 0, 255).astype(np.uint8)
+
+
+def _part_map_images(part, max_size: int = _MAP_MAX_SIZE):
+    """(albedo PIL image, normal PIL image | None) for a part carrying real
+    image maps (``part.maps``, see texture_apply.attach_maps_to_part), else
+    (None, None). Creator UVs sample map row = v * h while trimesh flips
+    TEXCOORD_0 on export, so rows are stored flipped (glTF v=0 = top row)."""
+    maps = getattr(part, "maps", None)
+    if not maps:
+        return None, None
+    albedo = maps.get("albedo")
+    if albedo is None:
+        return None, None
+    from PIL import Image  # type: ignore
+
+    img = Image.fromarray(np.ascontiguousarray(np.flipud(np.asarray(albedo))), "RGB")
+    if max(img.size) > int(max_size):
+        scale = int(max_size) / max(img.size)
+        img = img.resize(
+            (max(1, round(img.size[0] * scale)), max(1, round(img.size[1] * scale))),
+            Image.LANCZOS,
+        )
+    normal_img = None
+    normal = maps.get("normal")
+    if normal is not None:
+        normal_img = Image.fromarray(
+            np.ascontiguousarray(np.flipud(np.asarray(normal))), "RGB"
+        )
+    elif maps.get("bump") is not None:
+        normal_img = Image.fromarray(
+            np.ascontiguousarray(np.flipud(_bump_to_normal_u8(maps["bump"]))), "RGB"
+        )
+    if normal_img is not None and normal_img.size != img.size:
+        normal_img = normal_img.resize(img.size, Image.LANCZOS)
+    return img, normal_img
+
+
 def _write_glb_scene(path: Path, parts, positions, colors, texture_size: int) -> None:
     """Write a GLB with one named node per part, PBR material + baked albedo
     texture + COLOR_0 vertex colors per part (F5/W3/W7)."""
@@ -270,18 +320,39 @@ def _write_glb_scene(path: Path, parts, positions, colors, texture_size: int) ->
     scene = trimesh.Scene()
     for part, vc in zip(parts, vert_colors):
         preset = MATERIAL_PRESETS.get(part.material, default_preset())
-        mean_col = vc.mean(axis=0) if len(vc) else np.array([0.7, 0.7, 0.7])
-        # glTF UV convention: v = 0 is the image top row. trimesh flips
-        # uv[:, 1] on export, so bake against the flipped coordinates.
-        uv_gltf = part.uvs.astype(np.float64).copy()
-        uv_gltf[:, 1] = 1.0 - uv_gltf[:, 1]
-        texture = _bake_uv_texture(uv_gltf, vc, texture_size)
+        map_img, normal_img = _part_map_images(part)
+        if map_img is not None:
+            # Image-map path (CR_TexReal): the real albedo map is embedded as
+            # baseColorTexture at full resolution; COLOR_0 carries only the
+            # per-part tint (white by default) so the texture shows
+            # unmodulated (renderers multiply vertex colour x texture).
+            # baseColorFactor stays white for the same reason.
+            tint = np.asarray(getattr(part, "tint", None) or (1.0, 1.0, 1.0),
+                              dtype=np.float64).reshape(3)
+            tint = np.clip(tint, 0.0, 1.0)
+            texture = map_img
+            factor = np.array([255, 255, 255, 255], dtype=np.uint8)
+            vc = np.broadcast_to(tint, vc.shape).copy()
+            uv_scale = np.asarray(getattr(part, "uv_scale", (1.0, 1.0)),
+                                  dtype=np.float64).reshape(2)
+            export_uv = part.uvs.astype(np.float64) * uv_scale
+        else:
+            # Stock vertex-colour bake path (unchanged).
+            mean_col = vc.mean(axis=0) if len(vc) else np.array([0.7, 0.7, 0.7])
+            # glTF UV convention: v = 0 is the image top row. trimesh flips
+            # uv[:, 1] on export, so bake against the flipped coordinates.
+            uv_gltf = part.uvs.astype(np.float64).copy()
+            uv_gltf[:, 1] = 1.0 - uv_gltf[:, 1]
+            texture = _bake_uv_texture(uv_gltf, vc, texture_size)
+            factor = np.append(np.clip(mean_col * 255.0, 0, 255), 255).astype(np.uint8)
+            export_uv = part.uvs
         material = PBRMaterial(
             name=part.material,
             baseColorTexture=texture,
-            baseColorFactor=np.append(np.clip(mean_col * 255.0, 0, 255), 255).astype(np.uint8),
+            baseColorFactor=factor,
             metallicFactor=float(preset["metallic"]),
             roughnessFactor=float(preset["roughness"]),
+            normalTexture=normal_img,
         )
         tmesh = trimesh.Trimesh(
             vertices=part.vertices,
@@ -289,7 +360,7 @@ def _write_glb_scene(path: Path, parts, positions, colors, texture_size: int) ->
             vertex_normals=part.normals,
             process=False,
         )
-        visuals = TextureVisuals(uv=part.uvs, material=material)
+        visuals = TextureVisuals(uv=export_uv, material=material)
         rgba = np.concatenate(
             [np.clip(vc * 255.0, 0, 255).astype(np.uint8),
              np.full((vc.shape[0], 1), 255, dtype=np.uint8)],
@@ -316,6 +387,12 @@ def write_glb_parts(
     This is the export path for generators that build their own exact meshes
     instead of spec primitives — e.g. ``generation.soft_author`` cloth sheets,
     ropes, frangible vessels, and ragdoll body parts.
+
+    Parts carrying real image maps (``part.maps`` /
+    ``part.uv_scale`` / ``part.tint``, see
+    ``generation.texture_apply.attach_maps_to_part``) embed the full-resolution
+    albedo (plus a bump-derived normal map) as baseColorTexture instead of the
+    vertex-baked texture; parts without maps keep the baked vertex-colour path.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
